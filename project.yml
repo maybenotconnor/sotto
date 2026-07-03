@@ -8,12 +8,23 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.15.4
 targets:
   Sotto:
     type: application
     platform: iOS
     sources:
       - path: Sotto
+        excludes:
+          - "Resources"
+      - path: Sotto/Resources/silero-vad-unified-256ms-v6.0.0.mlmodelc
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: FluidAudio
     info:
       path: Sotto/Info.plist
       properties:
