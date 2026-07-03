@@ -1,0 +1,43 @@
+name: Sotto
+options:
+  bundleIdPrefix: com.decanlys
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+targets:
+  Sotto:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sotto
+    info:
+      path: Sotto/Info.plist
+      properties:
+        NSMicrophoneUsageDescription: Sotto listens for nearby speech and records only while people are talking. Audio is processed on this device.
+        UIBackgroundModes: [audio]
+        NSSupportsLiveActivities: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UILaunchScreen: {}
+  SottoTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SottoTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Sotto
+schemes:
+  Sotto:
+    build:
+      targets:
+        Sotto: all
+    test:
+      targets:
+        - SottoTests
