@@ -71,12 +71,6 @@ actor PhoneMicAudioSource: AudioSource {
     }
 }
 
-// `FormatConverter` is only ever touched from within `TapProcessor.state`'s `Mutex` lock,
-// which serializes access — so it's genuinely thread-safe despite not being Sendable itself
-// (it wraps a non-Sendable `AVAudioConverter`). Needed because a non-Sendable stored property
-// otherwise defeats region-isolation checking of the `Mutex<State>`-protected access below.
-extension FormatConverter: @unchecked Sendable {}
-
 /// Runs inside the audio tap callback: convert to 16 kHz mono, copy samples out
 /// synchronously, chunk, and yield. `Mutex` (not an actor) because the tap thread
 /// must never await.

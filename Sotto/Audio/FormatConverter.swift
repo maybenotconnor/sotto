@@ -3,7 +3,12 @@ import AVFoundation
 /// Converts hardware-format tap buffers to the pipeline format: 16 kHz mono Float32.
 /// One instance per tap installation (AVAudioConverter carries resampler state);
 /// rebuild it on route changes when the hardware format shifts (M3).
-final class FormatConverter {
+///
+/// Instances are confined to the audio tap thread behind `TapProcessor`'s `Mutex`
+/// (see `PhoneMicAudioSource.swift`), which serializes all access and makes this
+/// genuinely thread-safe despite wrapping a non-Sendable `AVAudioConverter`.
+/// `@unchecked` because the compiler cannot see that confinement.
+final class FormatConverter: @unchecked Sendable {
     static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
 
@@ -26,7 +31,11 @@ final class FormatConverter {
             return []
         }
 
-        var consumed = false
+        // `AVAudioConverter` invokes this input block synchronously on the calling thread
+        // during `convert`, so these captures never actually cross threads even though the
+        // block parameter is marked `@Sendable`.
+        nonisolated(unsafe) var consumed = false
+        nonisolated(unsafe) let inputBuffer = buffer
         var conversionError: NSError?
         converter.convert(to: output, error: &conversionError) { _, outStatus in
             if consumed {
@@ -36,7 +45,7 @@ final class FormatConverter {
             }
             consumed = true
             outStatus.pointee = .haveData
-            return buffer
+            return inputBuffer
         }
 
         guard conversionError == nil, let channelData = output.floatChannelData else {
