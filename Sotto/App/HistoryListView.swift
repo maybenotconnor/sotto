@@ -169,15 +169,3 @@ struct SegmentRowView: View {
         .padding(.vertical, 2)
     }
 }
-
-// TEMPORARY (Task 2 commit only): Task 3 replaces this with the real
-// Sotto/App/ConversationDetailView.swift and removes this placeholder.
-struct ConversationDetailView: View {
-    let model: AppModel
-    let entry: DaySegmentEntry
-    let dayDirectory: URL
-
-    var body: some View {
-        Text(entry.id)
-    }
-}

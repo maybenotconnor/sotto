@@ -132,6 +132,12 @@ final class AppModel {
         if let queue { await queue.retry(m4aURL: m4aURL) }
     }
 
+    /// Detail view "Re-transcribe with current backend": replaces any existing job for this
+    /// URL with a fresh one and redrives it (see `TranscriptionQueue.retranscribe`).
+    func retranscribe(m4aURL: URL) async {
+        if let queue { await queue.retranscribe(m4aURL: m4aURL) }
+    }
+
     /// Row deletion (List swipe / Detail button). Both files are removed best-effort — a
     /// partial state (e.g. the .m4a already gone under `deleteAfterTranscription` retention,
     /// leaving only the .md) must not block the rest of the cleanup — then the queue/index
