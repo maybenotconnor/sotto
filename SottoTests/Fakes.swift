@@ -325,6 +325,17 @@ actor FakeAssetInstaller: SpeechAssetInstalling {
     func setSupported(_ value: Bool) { supported = value }
 }
 
+struct FakePostProcessor: PostProcessor {
+    var result = PostProcessingResult(
+        title: "Fake standup", summary: "We discussed fakes.", actionItems: ["Ship it"], custom: nil)
+    var error: Error?
+
+    func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
+        if let error { throw error }
+        return result
+    }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0
