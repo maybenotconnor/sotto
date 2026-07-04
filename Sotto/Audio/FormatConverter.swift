@@ -17,9 +17,15 @@ final class FormatConverter: @unchecked Sendable {
 
     private let converter: AVAudioConverter
     private let ratio: Double
+    private var scratch: AVAudioPCMBuffer?
 
     init?(inputFormat: AVAudioFormat) {
-        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+        // Defense-in-depth: a 0 Hz / 0-channel "format" is a documented AVAudioEngine
+        // degenerate state when no valid input route exists; without this guard the
+        // ratio below becomes non-finite and the first convert() traps on the audio thread.
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat)
+        else {
             return nil
         }
         self.converter = converter
@@ -27,17 +33,24 @@ final class FormatConverter: @unchecked Sendable {
     }
 
     /// Synchronously converts one tap buffer, copying samples out — the returned array
-    /// owns its memory, so the tap buffer is free to be recycled by the engine.
+    /// owns its memory, so both the tap buffer and the reused scratch buffer are free
+    /// to be recycled.
     func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-        guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
-            logger.error("Failed to allocate output buffer (capacity: \(capacity, privacy: .public))")
+        let needed = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
+        if scratch == nil || scratch!.frameCapacity < needed {
+            // Rare: first call, or a larger-than-ever tap buffer — never steady-state.
+            // Allocating per callback on the realtime audio thread risks priority
+            // inversion; reuse keeps the hot path allocation-free.
+            scratch = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: max(needed, 4096))
+        }
+        guard let output = scratch else {
+            logger.error("Failed to allocate conversion scratch buffer (\(needed) frames)")
             return []
         }
+        output.frameLength = 0
 
-        // `AVAudioConverter` invokes this input block synchronously on the calling thread
-        // during `convert`, so these captures never actually cross threads even though the
-        // block parameter is marked `@Sendable`.
+        // The converter invokes the input block synchronously on the calling thread during
+        // `convert`, so these captures never actually cross threads (block is marked @Sendable).
         nonisolated(unsafe) var consumed = false
         nonisolated(unsafe) let inputBuffer = buffer
         var conversionError: NSError?
@@ -53,7 +66,7 @@ final class FormatConverter: @unchecked Sendable {
         }
 
         guard conversionError == nil, let channelData = output.floatChannelData else {
-            logger.error("Conversion failed: \(conversionError?.localizedDescription ?? "no channel data", privacy: .public)")
+            logger.error("Audio conversion failed: \(conversionError?.localizedDescription ?? "no channel data")")
             return []
         }
         return Array(UnsafeBufferPointer(start: channelData[0], count: Int(output.frameLength)))

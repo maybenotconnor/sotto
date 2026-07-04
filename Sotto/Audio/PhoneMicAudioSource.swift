@@ -10,9 +10,10 @@ actor PhoneMicAudioSource: AudioSource {
     nonisolated var isAvailable: Bool { true }
 
     enum AudioSourceError: Error {
-        case alreadyStarted
         case microphonePermissionDenied
         case converterUnavailable
+        case invalidHardwareFormat
+        case alreadyStarted
     }
 
     private var engine: AVAudioEngine?
@@ -29,6 +30,12 @@ actor PhoneMicAudioSource: AudioSource {
         let input = engine.inputNode
         // Tap at the HARDWARE format — requesting 16 kHz here crashes with a format mismatch.
         let hardwareFormat = input.outputFormat(forBus: 0)
+        // installTap traps (Obj-C precondition) on a 0 Hz/0-channel format — reject the
+        // documented no-valid-input-route degenerate state with a recoverable throw instead.
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            throw AudioSourceError.invalidHardwareFormat
+        }
         guard let converter = FormatConverter(inputFormat: hardwareFormat) else {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             throw AudioSourceError.converterUnavailable
