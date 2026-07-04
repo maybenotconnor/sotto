@@ -9,9 +9,11 @@ enum DayIndexRebuilder {
             at: dayDirectory, includingPropertiesForKeys: nil)) ?? []
         let mdFiles = contents.filter { $0.pathExtension == "md" }
         let m4aFiles = contents.filter { $0.pathExtension == "m4a" }
-        let mdIDs = Set(mdFiles.map { $0.deletingPathExtension().lastPathComponent })
 
         var segments: [DaySegmentEntry] = []
+        // Only ids that were SUCCESSFULLY parsed suppress the orphan-m4a fallback below —
+        // an unreadable .md must still surface as a queued entry rather than vanish.
+        var parsedIDs: Set<String> = []
 
         for md in mdFiles {
             guard let text = try? String(contentsOf: md, encoding: .utf8) else { continue }
@@ -20,6 +22,7 @@ enum DayIndexRebuilder {
             let iso = ISO8601DateFormatter()
             let startTime = front["date"].flatMap { iso.date(from: $0) }
                 ?? fallbackDate(dayName: date, id: id)
+            parsedIDs.insert(id)
             segments.append(DaySegmentEntry(
                 id: id,
                 startTime: startTime,
@@ -32,7 +35,7 @@ enum DayIndexRebuilder {
 
         for m4a in m4aFiles {
             let id = m4a.deletingPathExtension().lastPathComponent
-            guard !mdIDs.contains(id) else { continue }
+            guard !parsedIDs.contains(id) else { continue }
             segments.append(DaySegmentEntry(
                 id: id,
                 startTime: fallbackDate(dayName: date, id: id),
@@ -41,7 +44,7 @@ enum DayIndexRebuilder {
                 transcriptionState: "queued"))
         }
 
-        segments.sort { $0.startTime < $1.startTime }
+        segments.sort { ($0.startTime, $0.id) < ($1.startTime, $1.id) }
         return DayIndex(date: date, segments: segments, gaps: [])
     }
 
@@ -62,6 +65,7 @@ enum DayIndexRebuilder {
     private static func wordCount(of text: String) -> Int {
         guard let bodyStart = text.range(of: "\n---\n") else { return 0 }
         let body = text[bodyStart.upperBound...]
+            .replacingOccurrences(of: #"\*\*Speaker \d+:\*\*"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "#", with: " ")
         return body.split { $0.isWhitespace || $0.isNewline }.count
     }

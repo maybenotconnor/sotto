@@ -35,6 +35,19 @@ struct DayIndexTests {
             atPath: later.deletingLastPathComponent().appendingPathComponent("_day.json").path))
     }
 
+    @Test func startTimeIsWrittenAsISO8601String() async throws {
+        let root = tempRoot()
+        let store = DayIndexStore(rootDirectory: root)
+        let url = m4a(root, day: "2026-03-14", name: "09-15-30")
+        await store.recordQueuedSegment(
+            m4aURL: url, startTime: Date(timeIntervalSince1970: 1_771_053_330), duration: 10)
+
+        let jsonURL = url.deletingLastPathComponent().appendingPathComponent("_day.json")
+        let raw = try String(contentsOf: jsonURL, encoding: .utf8)
+        // ISO8601 string starting with the year, not a raw epoch number.
+        #expect(raw.contains("\"startTime\" : \"2") || raw.contains("\"startTime\":\"2"))
+    }
+
     @Test func updateAndAudioRemovalMutateTheRightEntry() async throws {
         let root = tempRoot()
         let store = DayIndexStore(rootDirectory: root)
@@ -127,5 +140,44 @@ struct DayIndexTests {
         #expect(queued?.wordCount == nil)
         // Sorted by startTime:
         #expect(index.segments.map(\.id) == ["09-15-30", "10-42-18"])
+    }
+
+    @Test func unreadableMarkdownDegradesToQueuedEntry() async throws {
+        let root = tempRoot()
+        let dir = root.appendingPathComponent("2026-03-14")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Garbage non-UTF8 bytes: unparseable as a String, must not suppress the m4a fallback.
+        try Data([0xFF, 0xFE, 0x00, 0xFF]).write(to: dir.appendingPathComponent("11-00-00.md"))
+        try Data([0x01]).write(to: dir.appendingPathComponent("11-00-00.m4a"))
+
+        let index = DayIndexRebuilder.rebuild(dayDirectory: dir)
+
+        let entry = index.segments.first { $0.id == "11-00-00" }
+        #expect(entry != nil)
+        #expect(entry?.transcriptionState == "queued")
+    }
+
+    @Test func wordCountExcludesSpeakerLabels() async throws {
+        let root = tempRoot()
+        let dir = root.appendingPathComponent("2026-03-14")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let md = """
+        ---
+        date: 2026-03-14T11:00:00-04:00
+        duration: 42
+        backend: deepgram
+        ---
+
+        **Speaker 1:** Hello there, this is a test.
+        **Speaker 2:** Yes it certainly is indeed.
+        """
+        try md.write(to: dir.appendingPathComponent("11-00-00.md"), atomically: true, encoding: .utf8)
+
+        let index = DayIndexRebuilder.rebuild(dayDirectory: dir)
+
+        let entry = index.segments.first { $0.id == "11-00-00" }
+        #expect(entry?.wordCount == 11)   // speaker labels excluded from the count
     }
 }
