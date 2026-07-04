@@ -4,6 +4,7 @@ struct ContentView: View {
     @State private var pipeline: ListeningPipeline?
     @State private var setupError: String?
     @State private var recoveryNotice: String?
+    @State private var setUpStarted = false
 
     var body: some View {
         NavigationStack {
@@ -26,7 +27,8 @@ struct ContentView: View {
 
     @MainActor
     private func setUp() async {
-        guard pipeline == nil, setupError == nil else { return }
+        guard !setUpStarted else { return }
+        setUpStarted = true
         guard let modelURL = Bundle.main.url(
             forResource: SileroSpeechDetector.modelResourceName,
             withExtension: "mlmodelc")
@@ -38,9 +40,14 @@ struct ContentView: View {
         let store = SegmentStore()
         let heartbeat = HeartbeatStore()
 
-        // Unclean-shutdown detection + salvage (SPEC "heartbeat/unclean-shutdown detection").
+        // Unconditional launch sweep (SPEC "Recording writer"): a failed finalize can leave
+        // a CAF behind even after a clean shutdown. No-op when nothing is orphaned.
+        // Wiring-order invariant: salvage MUST complete before the recorder/writer below
+        // can exist — it transcodes every .caf under the root.
+        let salvaged = await Task.detached { OrphanSalvager.salvage(store: store) }.value
+
+        // The banner stays gated on the heartbeat (a crash), not on salvage results alone.
         if heartbeat.indicatesUncleanShutdown {
-            let salvaged = await Task.detached { OrphanSalvager.salvage(store: store) }.value
             recoveryNotice = salvaged.isEmpty
                 ? "Listening stopped unexpectedly last session."
                 : "Listening stopped unexpectedly — recovered \(salvaged.count) unfinished recording(s)."

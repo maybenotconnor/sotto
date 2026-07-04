@@ -43,6 +43,13 @@ struct HeartbeatTests {
         #expect(file.length > 0)
     }
 
+    @Test func salvageIsSafeAndEmptyWhenNothingOrphaned() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SalvageTests-\(UUID().uuidString)")
+        let store = SegmentStore(rootDirectory: root)
+        #expect(OrphanSalvager.salvage(store: store).isEmpty)   // unconditional launch sweep is a no-op
+    }
+
     @Test func salvageDropsUnreadableCAF() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("SalvageTests-\(UUID().uuidString)")

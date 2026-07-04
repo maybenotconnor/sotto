@@ -94,6 +94,29 @@ actor FakeSpeechDetector: SpeechDetecting {
     }
 }
 
+/// Scripted like FakeSpeechDetector, but THROWS for every chunk index at/after `throwFrom`.
+actor ThrowingSpeechDetector: SpeechDetecting {
+    struct Boom: Error {}
+    private let script: [Int: SpeechEvent]
+    private let throwFrom: Int
+    private var index = 0
+
+    init(script: [Int: SpeechEvent], throwFrom: Int) {
+        self.script = script
+        self.throwFrom = throwFrom
+    }
+
+    func process(_ chunk: AudioChunk) async throws -> SpeechEvent? {
+        defer { index += 1 }
+        if index >= throwFrom { throw Boom() }
+        return script[index]
+    }
+
+    func reset() {
+        index = 0
+    }
+}
+
 /// Records appended samples; finalize/discard bookkeeping for state-machine tests.
 final class FakeSegmentWriter: SegmentWriting {
     private(set) var writtenSampleCount = 0

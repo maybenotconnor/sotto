@@ -40,6 +40,10 @@ struct SegmentStore: Sendable {
         let dayDirectory = rootDirectory.appendingPathComponent(
             Self.dayFormatter.string(from: date), isDirectory: true)
         try FileManager.default.createDirectory(at: dayDirectory, withIntermediateDirectories: true)
+        // Explicit per SPEC — must never become `.complete`, which breaks writes while locked.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: dayDirectory.path)
 
         let base = Self.timeFormatter.string(from: date)
         var name = base

@@ -26,6 +26,9 @@ actor RecorderStateMachine: SegmentRecording {
         store: SegmentStore,
         config: RecorderConfig = RecorderConfig()
     ) {
+        precondition(config.preRollCapacity > 0, "preRollCapacity must be positive")
+        precondition(config.silenceTimeout > 0, "silenceTimeout must be positive")
+        precondition(config.maxSegmentDuration > 0, "maxSegmentDuration must be positive")
         self.detector = detector
         self.writerFactory = writerFactory
         self.store = store
@@ -53,10 +56,17 @@ actor RecorderStateMachine: SegmentRecording {
             event = try await detector.process(chunk)
         } catch {
             lastEvent = "VAD error: \(error)"
-            if state != .listening {
-                write(chunk.samples)   // never drop audio mid-segment over a VAD hiccup
-            } else {
+            if state == .listening {
                 preRoll.append(chunk.samples)
+            } else {
+                write(chunk.samples)   // never drop audio mid-segment over a VAD hiccup
+                if state == .silence {
+                    samplesSinceLastSpeech += chunk.samples.count
+                    if secondsOf(samplesSinceLastSpeech) >= config.silenceTimeout {
+                        finalizeSegment()
+                    }
+                }
+                rotateIfBeyondMaxDuration()
             }
             return snapshot()
         }

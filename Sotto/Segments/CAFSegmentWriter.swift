@@ -33,6 +33,10 @@ final class CAFSegmentWriter: SegmentWriting {
         self.file = try AVAudioFile(
             forWriting: cafURL, settings: settings,
             commonFormat: .pcmFormatFloat32, interleaved: false)
+        // Explicit per SPEC — must never become `.complete`, which breaks writes while locked.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: cafURL.path)
     }
 
     func append(_ samples: [Float]) throws {
@@ -56,6 +60,10 @@ final class CAFSegmentWriter: SegmentWriting {
         file = nil   // AVAudioFile flushes and closes on release
         try Self.transcodeToM4A(caf: cafURL, m4a: m4aURL)
         try? FileManager.default.removeItem(at: cafURL)
+        // Explicit per SPEC — must never become `.complete`, which breaks writes while locked.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: m4aURL.path)
         return m4aURL
     }
 

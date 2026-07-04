@@ -152,6 +152,27 @@ struct RecorderStateMachineTests {
         #expect(segments[0].duration > 0)
     }
 
+    @Test func vadErrorsDuringSilenceStillReachTimeout() async throws {
+        var config = RecorderConfig()
+        config.silenceTimeout = 0.5                       // 2 chunks of 256 ms
+        config.minSegmentSpeechDuration = 0
+        let factory = FakeWriterFactory()
+        let store = SegmentStore(rootDirectory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecorderTests-\(UUID().uuidString)"))
+        let machine = RecorderStateMachine(
+            detector: ThrowingSpeechDetector(
+                script: [0: .speechStart(time: nil), 1: .speechEnd(time: nil)], throwFrom: 2),
+            writerFactory: factory, store: store, config: config)
+
+        _ = await machine.beginListening()
+        var last = RecorderSnapshot(state: .idle, finalizedCount: 0, lastEvent: nil)
+        for _ in 0..<6 { last = await machine.process(chunk()) }   // chunks 2+ all throw
+
+        #expect(factory.writers[0].finalized)             // timeout still fired through errors
+        #expect(last.finalizedCount == 1)
+        #expect(last.state == .listening)
+    }
+
     @Test func markInterruptedFinalizesAndParksState() async throws {
         var config = RecorderConfig()
         config.minSegmentSpeechDuration = 0
