@@ -16,7 +16,7 @@ struct JobTransition: Sendable {
 /// the CAF→m4a transcode (M3 review Critical #1 — moved OFF the interruption window).
 actor TranscriptionQueue {
     private let storeURL: URL
-    private let service: any TranscriptionService
+    private let serviceProvider: @Sendable () -> any TranscriptionService
     private let maxAttempts: Int
     private let rootDirectory: URL
     private(set) var jobs: [TranscriptionJob] = []
@@ -29,9 +29,13 @@ actor TranscriptionQueue {
     /// `rootDirectory` relativizes persisted `caf`/`m4a` paths (M4 carryover — a container
     /// move, e.g. an iOS-managed app-data migration, invalidates absolute paths). Defaults
     /// to the Documents directory, the SPEC "File output" root everything else lives under.
+    ///
+    /// `serviceProvider` is resolved FRESH per job (in `step`, not here) — a backend change
+    /// (Deepgram key added, M6 settings toggle) applies to all future jobs without
+    /// reconstructing the queue (SPEC "changes affect only future segments").
     init(
-        storeURL: URL? = nil, service: any TranscriptionService, maxAttempts: Int = 3,
-        rootDirectory: URL? = nil
+        storeURL: URL? = nil, serviceProvider: @escaping @Sendable () -> any TranscriptionService,
+        maxAttempts: Int = 3, rootDirectory: URL? = nil
     ) {
         if let storeURL {
             self.storeURL = storeURL
@@ -41,7 +45,7 @@ actor TranscriptionQueue {
             try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
             self.storeURL = support.appendingPathComponent("transcription-jobs.json")
         }
-        self.service = service
+        self.serviceProvider = serviceProvider
         self.maxAttempts = maxAttempts
         let resolvedRoot = rootDirectory
             ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -55,6 +59,17 @@ actor TranscriptionQueue {
                 logger.error("transcription-jobs.json exists but failed to decode under both the v2 and legacy v1 formats — starting with an empty queue")
             }
         }
+    }
+
+    /// Fixed-service convenience: wraps `service` in a constant provider so every existing
+    /// call site (tests included) keeps compiling unchanged.
+    init(
+        storeURL: URL? = nil, service: any TranscriptionService, maxAttempts: Int = 3,
+        rootDirectory: URL? = nil
+    ) {
+        self.init(
+            storeURL: storeURL, serviceProvider: { service }, maxAttempts: maxAttempts,
+            rootDirectory: rootDirectory)
     }
 
     func setTransitionHandler(_ handler: @escaping @Sendable (JobTransition) -> Void) {
@@ -93,6 +108,17 @@ actor TranscriptionQueue {
         jobs.append(job)
         persist()
         return job
+    }
+
+    /// Failed-row retry (SPEC detail/list views): resets a `.failed` job to `.pending` with
+    /// attempts 0 and kicks a drain.
+    func retry(jobID: UUID) async {
+        guard let index = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[index].state == .failed else { return }
+        jobs[index].state = .pending
+        jobs[index].attempts = 0
+        persist()
+        await drain()
     }
 
     private enum StepOutcome {
@@ -165,6 +191,7 @@ actor TranscriptionQueue {
         // it's re-resolved via `jobID` immediately after that await (the queue's only
         // suspension point) since a future job-removal (M5 retention) must not corrupt it.
         do {
+            let service = serviceProvider()
             let result = try await service.transcribe(file: jobs[index].m4aURL)
             guard let doneIndex = jobs.firstIndex(where: { $0.id == jobID }) else {
                 return .progressed

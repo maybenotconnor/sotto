@@ -95,15 +95,18 @@ final class AppModel {
                 store: store)
 
             // Backend selection: on-device by default; Deepgram only when a key exists AND
-            // assets make sense to skip (full Settings toggle is M6).
+            // assets make sense to skip (full Settings toggle is M6). Resolved fresh PER JOB
+            // (the queue calls this closure inside `step`, not once at construction) so a
+            // Deepgram key added mid-session hot-swaps the backend for future segments only,
+            // without reconstructing the queue (SPEC "changes affect only future segments").
             let keychain = KeychainStore()
-            let service: any TranscriptionService
-            if let _ = keychain.get("deepgramAPIKey") {
-                service = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
-            } else {
-                service = SpeechAnalyzerService()
-            }
-            let transcriptionQueue = TranscriptionQueue(service: service)
+            let transcriptionQueue = TranscriptionQueue(serviceProvider: {
+                if let _ = keychain.get("deepgramAPIKey") {
+                    return DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
+                } else {
+                    return SpeechAnalyzerService()
+                }
+            })
             self.queue = transcriptionQueue
 
             // Fix 3: salvaged audio must be transcribed, not just recovered. Enqueued

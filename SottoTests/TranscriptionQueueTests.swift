@@ -223,6 +223,45 @@ struct TranscriptionQueueTests {
         #expect(await moved.jobs.first?.state == .done)   // paths resolved at the NEW root
     }
 
+    @Test func retryResetsFailedJobAndDrains() async throws {
+        let dir = tempDir()
+        let flaky = FakeTranscriptionService(text: "second time lucky", failuresBeforeSuccess: 1)
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            service: flaky, maxAttempts: 1, rootDirectory: dir)
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.drain()
+        let failed = await queue.jobs.first
+        #expect(failed?.state == .failed)
+
+        await queue.retry(jobID: failed!.id)
+
+        let retried = await queue.jobs.first
+        #expect(retried?.state == .done)   // retry re-drained and succeeded
+        #expect(retried?.attempts == 0 || retried?.state == .done)
+    }
+
+    @Test func serviceProviderIsEvaluatedPerJob() async throws {
+        let dir = tempDir()
+        let selector = Mutex<String>("first")
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            serviceProvider: {
+                FakeTranscriptionService(text: selector.withLock { $0 })
+            },
+            rootDirectory: dir)
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.drain()
+        selector.withLock { $0 = "second" }
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("b")))
+        await queue.drain()
+
+        let dirA = dir.appendingPathComponent("a/seg.md")
+        let dirB = dir.appendingPathComponent("b/seg.md")
+        #expect(try String(contentsOf: dirA, encoding: .utf8).contains("first"))
+        #expect(try String(contentsOf: dirB, encoding: .utf8).contains("second"))
+    }
+
     @Test func legacyAbsoluteURLJobsStillLoad() async throws {
         let dir = tempDir()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
