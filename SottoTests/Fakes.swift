@@ -336,6 +336,33 @@ struct FakePostProcessor: PostProcessor {
     }
 }
 
+/// PostProcessor whose `process()` suspends mid-flight until released — lets a test delete
+/// the job's m4a while post-processing (notes generation) is in progress, deterministically
+/// exercising the M8 hardening guard that re-checks the m4a after the notes await.
+actor GatedPostProcessor: PostProcessor {
+    private var gate: CheckedContinuation<Void, Never>?
+    private var entered: CheckedContinuation<Void, Never>?
+    private var wasEntered = false
+
+    func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
+        wasEntered = true
+        entered?.resume()
+        entered = nil
+        await withCheckedContinuation { gate = $0 }
+        return PostProcessingResult(title: "Ghost", summary: nil, actionItems: nil, custom: nil)
+    }
+
+    func waitUntilEntered() async {
+        if wasEntered { return }
+        await withCheckedContinuation { entered = $0 }
+    }
+
+    func release() {
+        gate?.resume()
+        gate = nil
+    }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0

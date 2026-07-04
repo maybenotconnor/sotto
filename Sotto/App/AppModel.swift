@@ -325,7 +325,11 @@ final class AppModel {
                 // actually available on this device — never a download/setup affordance,
                 // never blocks a job (best-effort inside the queue itself).
                 postProcessorProvider: {
-                    FoundationModelsPostProcessor.isModelAvailable ? FoundationModelsPostProcessor() : nil
+                    // SPEC Low Power detection — skip ANE-heavy notes generation while Low
+                    // Power Mode is on; transcripts still ship, only the best-effort notes
+                    // are skipped for this job.
+                    guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return nil }
+                    return FoundationModelsPostProcessor.isModelAvailable ? FoundationModelsPostProcessor() : nil
                 })
             self.queue = transcriptionQueue
 
@@ -405,6 +409,9 @@ final class AppModel {
                     let wordCount = transition.result.map {
                         $0.text.split { $0.isWhitespace || $0.isNewline }.count
                     }
+                    // Keep-stale by design: a re-transcription that yields no notes keeps the
+                    // previous title (friendlier than clearing); a rebuild from files drops
+                    // it — acceptable divergence.
                     await dayIndexStore.updateSegment(
                         m4aURL: transition.job.m4aURL,
                         transcriptionState: transition.job.state.rawValue,

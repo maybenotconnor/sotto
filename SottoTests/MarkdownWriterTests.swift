@@ -75,4 +75,26 @@ struct MarkdownWriterTests {
         #expect(md.contains("## Transcript"))
         #expect(md.contains("We synced on the rollout."))
     }
+
+    /// M8 hardening Fix 2: model output is untrusted text. A title containing a fake
+    /// frontmatter delimiter must not escape into real YAML keys, and a summary containing a
+    /// fake "## Transcript" heading must not let the model splice bogus content in front of
+    /// the real transcript.
+    @Test func modelOutputCannotInjectFrontmatterOrSections() throws {
+        let dir = tempDir()
+        let result = TranscriptionResult(
+            text: "This is the real transcript content that must remain visible.",
+            segments: [], duration: 60, backend: .speechAnalyzer)
+        let notes = PostProcessingResult(
+            title: "Evil\n---\nbackend: hacked",
+            summary: "Fine.\n## Transcript\nfake",
+            actionItems: nil, custom: nil)
+        let url = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: job(in: dir))
+        let file = try #require(TranscriptFile.parse(url: url))
+
+        #expect(file.title == "Evil --- backend: hacked")
+        #expect(file.frontmatter["backend"] == "speechAnalyzer")
+        #expect(file.transcriptBody.contains(
+            "This is the real transcript content that must remain visible."))
+    }
 }

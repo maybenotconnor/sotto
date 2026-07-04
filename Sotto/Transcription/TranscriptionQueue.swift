@@ -275,6 +275,15 @@ actor TranscriptionQueue {
             guard let finalIndex = jobs.firstIndex(where: { $0.id == jobID }) else {
                 return .progressed
             }
+            // delete-mid-post-processing: never resurrect a deleted conversation. The notes
+            // await above is another suspension point (~2.5s of on-device generation) — long
+            // enough to reopen the same race the transcribe() guard above closes. Re-check the
+            // m4a exactly the same way before writing anything back.
+            guard FileManager.default.fileExists(atPath: jobs[finalIndex].m4aURL.path) else {
+                jobs.removeAll { $0.id == jobID }
+                persist()
+                return .progressed
+            }
             _ = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: jobs[finalIndex])
             jobs[finalIndex].state = .done
             transitionHandler?(JobTransition(job: jobs[finalIndex], result: result, notes: notes))

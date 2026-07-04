@@ -20,6 +20,13 @@ enum TranscriptMarkdownWriter {
         timeFormatter.locale = Locale(identifier: "en_US_POSIX")
         timeFormatter.dateFormat = "h:mm a"
 
+        // M8 hardening Fix 2: model output is untrusted text; never let it alter frontmatter
+        // or section structure. Sanitized once, here at the writer boundary — the single
+        // choke point every notes value passes through before landing in the file.
+        let sanitizedTitle = notes?.title.map(Self.sanitizeInline).flatMap { $0.isEmpty ? nil : $0 }
+        let sanitizedSummary = notes?.summary.map(Self.sanitizeBlock)
+        let sanitizedActionItems = notes?.actionItems?.map(Self.sanitizeBlock)
+
         var lines: [String] = ["---"]
         lines.append("date: \(iso.string(from: job.startDate))")
         lines.append("duration: \(Int(job.duration.rounded()))")
@@ -29,13 +36,13 @@ enum TranscriptMarkdownWriter {
         if result.backend == .deepgram {
             lines.append("speakers: \(max(speakers.count, 1))")
         }
-        if let title = notes?.title {
-            lines.append("title: \(title)")
+        if let sanitizedTitle {
+            lines.append("title: \(sanitizedTitle)")
         }
         lines.append("---")
         lines.append("")
-        if let title = notes?.title {
-            lines.append("# \(title) — \(timeFormatter.string(from: job.startDate))")
+        if let sanitizedTitle {
+            lines.append("# \(sanitizedTitle) — \(timeFormatter.string(from: job.startDate))")
         } else {
             lines.append("# Conversation — \(timeFormatter.string(from: job.startDate))")
         }
@@ -45,17 +52,17 @@ enum TranscriptMarkdownWriter {
         // value with neither summary nor action items), the body below is EXACTLY today's
         // shape — no "## Transcript" heading inserted — so every pre-M8 markdown/rebuild
         // test keeps passing unmodified.
-        let hasNotesBody = notes?.summary != nil || notes?.actionItems?.isEmpty == false
+        let hasNotesBody = sanitizedSummary != nil || sanitizedActionItems?.isEmpty == false
         if hasNotesBody {
             lines.append("## Summary")
             lines.append("")
-            if let summary = notes?.summary {
-                lines.append(summary)
+            if let sanitizedSummary {
+                lines.append(sanitizedSummary)
                 lines.append("")
             }
-            if let actionItems = notes?.actionItems, !actionItems.isEmpty {
+            if let sanitizedActionItems, !sanitizedActionItems.isEmpty {
                 lines.append("Action items:")
-                for item in actionItems {
+                for item in sanitizedActionItems {
                     lines.append("- \(item)")
                 }
                 lines.append("")
@@ -84,5 +91,18 @@ enum TranscriptMarkdownWriter {
             ofItemAtPath: url.path)
 
         return url
+    }
+
+    // model output is untrusted text; never let it alter frontmatter or section structure
+    private static func sanitizeInline(_ text: String) -> String {
+        let collapsed = text.replacingOccurrences(of: "\n", with: " ")
+        let stripped = collapsed.drop { $0 == "#" || $0 == "-" }
+        let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix(120))
+    }
+
+    // model output is untrusted text; never let it alter frontmatter or section structure
+    private static func sanitizeBlock(_ text: String) -> String {
+        text.replacingOccurrences(of: "\n## ", with: "\n")
     }
 }

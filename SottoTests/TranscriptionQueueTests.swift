@@ -365,6 +365,34 @@ struct TranscriptionQueueTests {
         #expect(box.withLock { $0 }?.title == "Fake standup")
     }
 
+    /// M8 hardening Fix 1: the delete-mid-transcription guard above runs BEFORE the notes
+    /// await; the ~2.5s notes-generation suspension reopens the same race. Deleting the m4a
+    /// while the (gated) post-processor is suspended, then releasing it, must not resurrect
+    /// the markdown once post-processing finally completes. (Note: `removeJob` is deliberately
+    /// NOT called here — that would make `finalIndex`'s lookup fail and take the early-return
+    /// path instead, which doesn't exercise the new file-existence guard. Only the files are
+    /// deleted, so the job is still present when the worker resumes and the guard fires.)
+    @Test func deleteDuringPostProcessingDoesNotResurrectMarkdown() async throws {
+        let dir = tempDir()
+        let processor = GatedPostProcessor()
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            serviceProvider: { FakeTranscriptionService(text: "a fairly long transcript with plenty of words to process here today") },
+            rootDirectory: dir,
+            postProcessorProvider: { processor })
+        let segment = try makeSegment(in: dir.appendingPathComponent("a"))
+        await queue.enqueue(segment)
+        async let draining: Void = queue.drain()
+        await processor.waitUntilEntered()                 // worker suspended in notes generation
+        try? FileManager.default.removeItem(at: segment.m4aURL)   // user deletes
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("a/seg.md"))
+        await processor.release()
+        await draining
+
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("a/seg.md").path))
+        #expect(await queue.jobs.isEmpty)
+    }
+
     @Test func postProcessorFailureStillCompletesTheJobPlainly() async throws {
         struct Boom: Error {}
         let dir = tempDir()

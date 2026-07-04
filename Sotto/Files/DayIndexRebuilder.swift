@@ -29,7 +29,10 @@ enum DayIndexRebuilder {
                 duration: front["duration"].flatMap(Double.init) ?? 0,
                 backend: front["backend"],
                 hasAudio: m4aFiles.contains { $0.deletingPathExtension().lastPathComponent == id },
-                wordCount: wordCount(of: file.body),
+                // M8 hardening Fix 5: count words from the parsed TRANSCRIPT body, not the
+                // whole post-frontmatter body — a notes-bearing file's Summary/action-items
+                // text would otherwise inflate the count with words nobody spoke.
+                wordCount: wordCount(of: file.transcriptBody),
                 transcriptionState: "done",
                 title: front["title"]))
         }
@@ -49,7 +52,8 @@ enum DayIndexRebuilder {
         return DayIndex(date: date, segments: segments, gaps: [])
     }
 
-    /// Fed `TranscriptFile.body` (frontmatter already stripped by the shared parser above) —
+    /// Fed `TranscriptFile.transcriptBody` (frontmatter stripped, and the Summary/action-items
+    /// section excluded when notes are present — the shared parser above draws that line) —
     /// still strips speaker labels and heading markup, since those aren't "words".
     private static func wordCount(of body: String) -> Int {
         let stripped = body

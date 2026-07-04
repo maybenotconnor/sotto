@@ -14,7 +14,7 @@ struct OnboardingView: View {
             card(
                 icon: "waveform.circle.fill", tint: .green,
                 title: "Your notetaker that starts itself",
-                body: "Sotto notices when a conversation starts and takes notes automatically — no record button to remember. Recording and transcription stay on your phone.",
+                body: "Sotto notices when a conversation starts and takes notes automatically — no record button to remember. Recording and transcription stay on your phone by default.",
                 button: "Continue") { page = 1 }
                 .tag(0)
             card(
