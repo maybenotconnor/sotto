@@ -4,7 +4,9 @@ import Foundation
 /// next to the m4a (same basename, `.md`). Plain body for on-device backends (no speaker
 /// labels available); speaker-turn body for `deepgram`, which diarizes.
 enum TranscriptMarkdownWriter {
-    static func write(result: TranscriptionResult, job: TranscriptionJob) throws -> URL {
+    static func write(
+        result: TranscriptionResult, notes: PostProcessingResult? = nil, job: TranscriptionJob
+    ) throws -> URL {
         let url = job.m4aURL.deletingPathExtension().appendingPathExtension("md")
 
         // ISO8601DateFormatter with an explicit non-UTC `timeZone` DOES render that zone's
@@ -27,10 +29,41 @@ enum TranscriptMarkdownWriter {
         if result.backend == .deepgram {
             lines.append("speakers: \(max(speakers.count, 1))")
         }
+        if let title = notes?.title {
+            lines.append("title: \(title)")
+        }
         lines.append("---")
         lines.append("")
-        lines.append("# Conversation — \(timeFormatter.string(from: job.startDate))")
+        if let title = notes?.title {
+            lines.append("# \(title) — \(timeFormatter.string(from: job.startDate))")
+        } else {
+            lines.append("# Conversation — \(timeFormatter.string(from: job.startDate))")
+        }
         lines.append("")
+
+        // Byte-compatibility (Task 3 BINDING invariant): with `notes == nil` (or a notes
+        // value with neither summary nor action items), the body below is EXACTLY today's
+        // shape — no "## Transcript" heading inserted — so every pre-M8 markdown/rebuild
+        // test keeps passing unmodified.
+        let hasNotesBody = notes?.summary != nil || notes?.actionItems?.isEmpty == false
+        if hasNotesBody {
+            lines.append("## Summary")
+            lines.append("")
+            if let summary = notes?.summary {
+                lines.append(summary)
+                lines.append("")
+            }
+            if let actionItems = notes?.actionItems, !actionItems.isEmpty {
+                lines.append("Action items:")
+                for item in actionItems {
+                    lines.append("- \(item)")
+                }
+                lines.append("")
+            }
+            lines.append("## Transcript")
+            lines.append("")
+        }
+
         if result.backend == .deepgram, !result.segments.isEmpty {
             for segment in result.segments {
                 let speaker = segment.speaker.map { "**Speaker \($0):** " } ?? ""

@@ -343,4 +343,43 @@ struct TranscriptionQueueTests {
         await queue.removeJob(m4aURL: segment.m4aURL)
         #expect(await queue.jobs.isEmpty)
     }
+
+    @Test func postProcessorNotesLandInMarkdownAndTransition() async throws {
+        let dir = tempDir()
+        let box = Mutex<PostProcessingResult?>(nil)
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            serviceProvider: { FakeTranscriptionService(text: "we synced on many important things and decided a plan of action for the release") },
+            rootDirectory: dir,
+            postProcessorProvider: { FakePostProcessor() })
+        await queue.setTransitionHandler { transition in
+            box.withLock { $0 = transition.notes }
+        }
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.drain()
+
+        let md = try String(
+            contentsOf: dir.appendingPathComponent("a/seg.md"), encoding: .utf8)
+        #expect(md.contains("title: Fake standup"))
+        #expect(md.contains("## Summary"))
+        #expect(box.withLock { $0 }?.title == "Fake standup")
+    }
+
+    @Test func postProcessorFailureStillCompletesTheJobPlainly() async throws {
+        struct Boom: Error {}
+        let dir = tempDir()
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            serviceProvider: { FakeTranscriptionService(text: "plain transcript") },
+            rootDirectory: dir,
+            postProcessorProvider: { FakePostProcessor(error: Boom()) })
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.drain()
+
+        #expect(await queue.jobs.first?.state == .done)      // never fails the job
+        let md = try String(
+            contentsOf: dir.appendingPathComponent("a/seg.md"), encoding: .utf8)
+        #expect(!md.contains("## Summary"))
+        #expect(md.contains("plain transcript"))
+    }
 }

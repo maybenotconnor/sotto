@@ -30,7 +30,8 @@ enum DayIndexRebuilder {
                 backend: front["backend"],
                 hasAudio: m4aFiles.contains { $0.deletingPathExtension().lastPathComponent == id },
                 wordCount: wordCount(of: file.body),
-                transcriptionState: "done"))
+                transcriptionState: "done",
+                title: front["title"]))
         }
 
         for m4a in m4aFiles {

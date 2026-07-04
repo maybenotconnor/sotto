@@ -55,7 +55,8 @@ struct DayIndexTests {
         await store.recordQueuedSegment(m4aURL: url, startTime: Date(), duration: 10)
 
         await store.updateSegment(
-            m4aURL: url, transcriptionState: "done", backend: "speechAnalyzer", wordCount: 847)
+            m4aURL: url, transcriptionState: "done", backend: "speechAnalyzer", wordCount: 847,
+            title: "Rollout sync")
         await store.setAudioRemoved(m4aURL: url)
 
         let entry = await store.index(forDay: url.deletingLastPathComponent())?.segments.first
@@ -63,6 +64,7 @@ struct DayIndexTests {
         #expect(entry?.backend == "speechAnalyzer")
         #expect(entry?.wordCount == 847)
         #expect(entry?.hasAudio == false)
+        #expect(entry?.title == "Rollout sync")
     }
 
     @Test func reRecordingSameIdReplacesNotDuplicates() async throws {
@@ -159,9 +161,10 @@ struct DayIndexTests {
         duration: 342
         speechEnd: 2026-03-14T09:20:12-04:00
         backend: speechAnalyzer
+        title: Rollout sync
         ---
 
-        # Conversation — 9:15 AM
+        # Rollout sync — 9:15 AM
 
         Hello there general conversation words here.
         """
@@ -180,6 +183,7 @@ struct DayIndexTests {
         #expect(done?.duration == 342)
         #expect(done?.hasAudio == true)
         #expect((done?.wordCount ?? 0) >= 6)                 // body words counted
+        #expect(done?.title == "Rollout sync")
         let queued = index.segments.first { $0.id == "10-42-18" }
         #expect(queued?.transcriptionState == "queued")
         #expect(queued?.wordCount == nil)

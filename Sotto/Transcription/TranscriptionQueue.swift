@@ -9,6 +9,7 @@ import os
 struct JobTransition: Sendable {
     let job: TranscriptionJob            // state already updated (done/failed)
     let result: TranscriptionResult?     // non-nil on done
+    let notes: PostProcessingResult?     // nil on failure/no processor (best-effort, M8)
 }
 
 /// SPEC "Transcription layer": persisted queue, never inline. Serial worker; drains
@@ -17,6 +18,7 @@ struct JobTransition: Sendable {
 actor TranscriptionQueue {
     private let storeURL: URL
     private let serviceProvider: @Sendable () -> any TranscriptionService
+    private let postProcessorProvider: (@Sendable () -> (any PostProcessor)?)?
     private let maxAttempts: Int
     private let rootDirectory: URL
     private(set) var jobs: [TranscriptionJob] = []
@@ -35,7 +37,8 @@ actor TranscriptionQueue {
     /// reconstructing the queue (SPEC "changes affect only future segments").
     init(
         storeURL: URL? = nil, serviceProvider: @escaping @Sendable () -> any TranscriptionService,
-        maxAttempts: Int = 3, rootDirectory: URL? = nil
+        maxAttempts: Int = 3, rootDirectory: URL? = nil,
+        postProcessorProvider: (@Sendable () -> (any PostProcessor)?)? = nil
     ) {
         if let storeURL {
             self.storeURL = storeURL
@@ -46,6 +49,7 @@ actor TranscriptionQueue {
             self.storeURL = support.appendingPathComponent("transcription-jobs.json")
         }
         self.serviceProvider = serviceProvider
+        self.postProcessorProvider = postProcessorProvider
         self.maxAttempts = maxAttempts
         let resolvedRoot = rootDirectory
             ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -65,11 +69,12 @@ actor TranscriptionQueue {
     /// call site (tests included) keeps compiling unchanged.
     init(
         storeURL: URL? = nil, service: any TranscriptionService, maxAttempts: Int = 3,
-        rootDirectory: URL? = nil
+        rootDirectory: URL? = nil,
+        postProcessorProvider: (@Sendable () -> (any PostProcessor)?)? = nil
     ) {
         self.init(
             storeURL: storeURL, serviceProvider: { service }, maxAttempts: maxAttempts,
-            rootDirectory: rootDirectory)
+            rootDirectory: rootDirectory, postProcessorProvider: postProcessorProvider)
     }
 
     func setTransitionHandler(_ handler: @escaping @Sendable (JobTransition) -> Void) {
@@ -233,7 +238,7 @@ actor TranscriptionQueue {
             } else {
                 jobs[index].state = .failed
                 persist()
-                transitionHandler?(JobTransition(job: jobs[index], result: nil))
+                transitionHandler?(JobTransition(job: jobs[index], result: nil, notes: nil))
                 return .progressed
             }
             persist()
@@ -259,9 +264,20 @@ actor TranscriptionQueue {
                 persist()
                 return .progressed
             }
-            _ = try TranscriptMarkdownWriter.write(result: result, job: jobs[doneIndex])
-            jobs[doneIndex].state = .done
-            transitionHandler?(JobTransition(job: jobs[doneIndex], result: result))
+            // M8 post-processing: best-effort meeting notes, run while the m4a is confirmed to
+            // still exist. This is another suspension point — a concurrent `removeJob` (row
+            // deletion) during the await must not corrupt `doneIndex`, so it's re-resolved via
+            // `jobID` immediately after, exactly like the transcribe() await above. Any throw
+            // (model unavailable, transcript too short, provider absent) degrades to
+            // `notes = nil` — never fails the job, never blocks the markdown write that follows.
+            let audioURL = jobs[doneIndex].m4aURL
+            let notes = try? await postProcessorProvider?()?.process(transcript: result, audio: audioURL)
+            guard let finalIndex = jobs.firstIndex(where: { $0.id == jobID }) else {
+                return .progressed
+            }
+            _ = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: jobs[finalIndex])
+            jobs[finalIndex].state = .done
+            transitionHandler?(JobTransition(job: jobs[finalIndex], result: result, notes: notes))
         } catch {
             if isEnvironmental(error) {
                 return .blocked   // stays .pending, attempts untouched; a later drain retries
@@ -285,7 +301,7 @@ actor TranscriptionQueue {
         }
         persist()
         if reachedThreshold {
-            transitionHandler?(JobTransition(job: jobs[index], result: nil))
+            transitionHandler?(JobTransition(job: jobs[index], result: nil, notes: nil))
         }
     }
 

@@ -309,17 +309,24 @@ final class AppModel {
             // Local (not `self.networkMonitor`) for the same reason as `settings` above:
             // keeps the MainActor-isolated `self` out of this nonisolated, @Sendable closure.
             let monitor = networkMonitor
-            let transcriptionQueue = TranscriptionQueue(serviceProvider: {
-                if settings.deepgramEnabled, keychain.get("deepgramAPIKey") != nil {
-                    let deepgram = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
-                    // Wi-Fi gate (M6b): reuses the existing environmental classification
-                    // (`.unavailable` → job stays pending, drain stops) rather than adding a
-                    // new one — see NetworkMonitoring.swift.
-                    return WiFiGatedService(inner: deepgram, allowed: { !settings.wifiOnlyUpload || monitor.isOnWiFi })
-                } else {
-                    return SpeechAnalyzerService()
-                }
-            })
+            let transcriptionQueue = TranscriptionQueue(
+                serviceProvider: {
+                    if settings.deepgramEnabled, keychain.get("deepgramAPIKey") != nil {
+                        let deepgram = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
+                        // Wi-Fi gate (M6b): reuses the existing environmental classification
+                        // (`.unavailable` → job stays pending, drain stops) rather than adding a
+                        // new one — see NetworkMonitoring.swift.
+                        return WiFiGatedService(inner: deepgram, allowed: { !settings.wifiOnlyUpload || monitor.isOnWiFi })
+                    } else {
+                        return SpeechAnalyzerService()
+                    }
+                },
+                // M8 post-processing: on-device meeting notes only when Apple Intelligence is
+                // actually available on this device — never a download/setup affordance,
+                // never blocks a job (best-effort inside the queue itself).
+                postProcessorProvider: {
+                    FoundationModelsPostProcessor.isModelAvailable ? FoundationModelsPostProcessor() : nil
+                })
             self.queue = transcriptionQueue
 
             // Fix 3: salvaged audio must be transcribed, not just recovered. Enqueued
@@ -402,7 +409,8 @@ final class AppModel {
                         m4aURL: transition.job.m4aURL,
                         transcriptionState: transition.job.state.rawValue,
                         backend: transition.result?.backend.rawValue,
-                        wordCount: wordCount)
+                        wordCount: wordCount,
+                        title: transition.notes?.title)
                     if transition.job.state == .done,
                        RetentionEnforcer.applyAfterTranscription(
                            m4aURL: transition.job.m4aURL, retention: settings.audioRetention) {

@@ -49,11 +49,15 @@ actor DayIndexStore {
         write(index, to: dayDirectory)
     }
 
-    func updateSegment(m4aURL: URL, transcriptionState: String, backend: String?, wordCount: Int?) {
+    func updateSegment(
+        m4aURL: URL, transcriptionState: String, backend: String?, wordCount: Int?,
+        title: String? = nil
+    ) {
         mutateEntry(for: m4aURL) { entry in
             entry.transcriptionState = transcriptionState
             if let backend { entry.backend = backend }
             if let wordCount { entry.wordCount = wordCount }
+            if let title { entry.title = title }
         }
     }
 

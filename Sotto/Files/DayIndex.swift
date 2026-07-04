@@ -8,6 +8,11 @@ struct DaySegmentEntry: Codable, Sendable, Equatable {
     var hasAudio: Bool
     var wordCount: Int?
     var transcriptionState: String    // "queued" | "done" | "failed"
+    // M8 meeting notes: nil until a post-processor produces a title (or for pre-M8 files/no
+    // notes at all). `String?`'s synthesized Decodable conformance already uses
+    // `decodeIfPresent` under the hood, so M5-era `_day.json` files (written before this
+    // field existed, with no "title" key at all) still load rather than failing to decode.
+    var title: String? = nil
 }
 
 struct DayGapEntry: Codable, Sendable, Equatable {

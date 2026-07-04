@@ -34,10 +34,39 @@ struct TranscriptFile {
         return TranscriptFile(frontmatter: front, body: body)
     }
 
-    /// List/Detail preview snippet: the `# Conversation — …` heading line dropped, remaining
-    /// whitespace collapsed to single spaces, capped at ~160 characters.
+    /// M8 meeting notes: the frontmatter `title:` value, nil for pre-M8/no-notes files.
+    var title: String? { frontmatter["title"] }
+
+    /// M8 meeting notes: the section between a `## Summary` heading and the next `## `
+    /// heading (or the end of the body). Nil when the body has no `## Summary` section —
+    /// i.e. every pre-M8 file and every M8 file whose post-processor produced no notes.
+    var summary: String? {
+        let lines = body.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("## Summary") }) else { return nil }
+        let rest = lines[(start + 1)...]
+        let end = rest.firstIndex { $0.hasPrefix("## ") } ?? lines.endIndex
+        let section = lines[(start + 1)..<end].joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return section.isEmpty ? nil : section
+    }
+
+    /// M8 meeting notes: the body after a `## Transcript` heading, when present — else the
+    /// whole body unchanged (byte-compatible with pre-M8 files, which have no such heading).
+    var transcriptBody: String {
+        let lines = body.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("## Transcript") }) else {
+            return body
+        }
+        return lines[(start + 1)...].joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// List/Detail preview snippet: prefers the `## Summary` section (M8 meeting notes) when
+    /// present; otherwise the `transcriptBody` with its `# Conversation — …` heading line
+    /// dropped. Whitespace collapsed to single spaces, capped at ~160 characters.
     var previewText: String {
-        let withoutHeading = body
+        let source = summary ?? transcriptBody
+        let withoutHeading = source
             .components(separatedBy: "\n")
             .filter { !$0.hasPrefix("#") }
             .joined(separator: " ")

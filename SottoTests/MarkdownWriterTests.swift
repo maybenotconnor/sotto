@@ -58,4 +58,21 @@ struct MarkdownWriterTests {
         #expect(md.contains("**Speaker 1:** Hi."))
         #expect(md.contains("**Speaker 2:** Hey."))
     }
+
+    @Test func notesRenderTitleSummaryAndTranscriptSections() throws {
+        let dir = tempDir()
+        let result = TranscriptionResult(
+            text: "We synced on the rollout.", segments: [], duration: 60, backend: .speechAnalyzer)
+        let notes = PostProcessingResult(
+            title: "Rollout sync", summary: "Quick status sync.", actionItems: ["File compliance"], custom: nil)
+        let url = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: job(in: dir))
+        let md = try String(contentsOf: url, encoding: .utf8)
+        #expect(md.contains("title: Rollout sync"))
+        #expect(md.contains("# Rollout sync — "))
+        #expect(md.contains("## Summary"))
+        #expect(md.contains("Quick status sync."))
+        #expect(md.contains("- File compliance"))
+        #expect(md.contains("## Transcript"))
+        #expect(md.contains("We synced on the rollout."))
+    }
 }
