@@ -18,6 +18,21 @@ struct RetentionTests {
         #expect(settings.audioRetention == .keepSevenDays)
     }
 
+    @Test func listeningSettingsDefaultsMatchSpec() {
+        let suite = UserDefaults(suiteName: "settings-tests-\(UUID().uuidString)")!
+        let settings = SettingsStore(defaults: suite)
+        #expect(settings.vadThreshold == 0.6)
+        #expect(settings.silenceTimeout == 45)
+        #expect(settings.minSegmentSpeech == 3)
+        #expect(settings.preRollSeconds == 1.0)
+        #expect(settings.wifiOnlyUpload == true)
+        #expect(settings.deepgramEnabled == false)
+        settings.vadThreshold = 0.4
+        settings.silenceTimeout = 90
+        #expect(settings.vadThreshold == Float(0.4))
+        #expect(settings.silenceTimeout == 90)
+    }
+
     @Test func applyAfterTranscriptionDeletesOnlyUnderDefaultPolicy() throws {
         let root = tempRoot()
         for retention in AudioRetention.allCases {

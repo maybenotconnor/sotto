@@ -55,6 +55,11 @@ final class AppModel {
         let dayIndexStore = DayIndexStore()
         self.dayIndex = dayIndexStore
         let heartbeat = HeartbeatStore()
+        // Copied to a local (Sendable struct) rather than captured as `self.settings` inside
+        // the Sendable closures below — avoids pulling the MainActor-isolated `self` into
+        // nonisolated contexts. Settings changes apply on the NEXT Start/launch (SPEC
+        // "changes affect only future segments"), not to a session already in progress.
+        let settings = self.settings
 
         // Unconditional launch sweep (SPEC "Recording writer"): a failed finalize can leave
         // a CAF behind even after a clean shutdown. No-op when nothing is orphaned.
@@ -87,21 +92,30 @@ final class AppModel {
             // CoreML load/compile can take hundreds of ms (seconds on a cold cache) —
             // off the MainActor so the loading indicator actually renders and animates.
             let detector = try await Task.detached(priority: .userInitiated) {
-                try SileroSpeechDetector(modelURL: modelURL)
+                try SileroSpeechDetector(modelURL: modelURL, threshold: settings.vadThreshold)
             }.value
+            var config = RecorderConfig()
+            config.silenceTimeout = settings.silenceTimeout
+            config.minSegmentSpeechDuration = settings.minSegmentSpeech
+            // max(1, ...): guards RecorderStateMachine's `preRollCapacity > 0` precondition —
+            // a 0 or negative preRollSeconds (bad UserDefaults value, M6b UI bug) must not
+            // crash setup.
+            config.preRollCapacity = max(1, Int(settings.preRollSeconds * Double(VADConstants.sampleRate)))
             let recorder = RecorderStateMachine(
                 detector: detector,
                 writerFactory: CAFSegmentWriterFactory(store: store),
-                store: store)
+                store: store,
+                config: config)
 
-            // Backend selection: on-device by default; Deepgram only when a key exists AND
-            // assets make sense to skip (full Settings toggle is M6). Resolved fresh PER JOB
-            // (the queue calls this closure inside `step`, not once at construction) so a
-            // Deepgram key added mid-session hot-swaps the backend for future segments only,
-            // without reconstructing the queue (SPEC "changes affect only future segments").
+            // Backend selection: on-device by default; Deepgram only when the Settings toggle
+            // is on AND a key exists (full Settings toggle is M6b's UI; the toggle plus the
+            // key gate both live here). Resolved fresh PER JOB (the queue calls this closure
+            // inside `step`, not once at construction) so a Deepgram key added or the toggle
+            // flipped mid-session hot-swaps the backend for future segments only, without
+            // reconstructing the queue (SPEC "changes affect only future segments").
             let keychain = KeychainStore()
             let transcriptionQueue = TranscriptionQueue(serviceProvider: {
-                if let _ = keychain.get("deepgramAPIKey") {
+                if settings.deepgramEnabled, keychain.get("deepgramAPIKey") != nil {
                     return DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
                 } else {
                     return SpeechAnalyzerService()
@@ -128,7 +142,6 @@ final class AppModel {
                 }
             }
 
-            let settings = self.settings
             await recorder.setSegmentHandler { segment in
                 Task {
                     await dayIndexStore.recordQueuedSegment(
@@ -204,7 +217,7 @@ final class AppModel {
             // availability so a fresh offline install doesn't burn attempts on jobs that
             // can't possibly succeed yet (M6 adds the download UI + drain gating).
             let onDeviceReady = await SpeechAnalyzerService.assetsInstalled(for: .current)
-            let hasDeepgramKey = keychain.get("deepgramAPIKey") != nil
+            let hasDeepgramKey = settings.deepgramEnabled && keychain.get("deepgramAPIKey") != nil
             if onDeviceReady || hasDeepgramKey {
                 Task { await transcriptionQueue.drain() }
             } else {

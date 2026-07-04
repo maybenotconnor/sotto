@@ -29,6 +29,61 @@ struct SettingsStore: Sendable {
     }
 }
 
+/// M6b's Settings screen binds to these (ranges are UI-enforced there, not here). Settings
+/// changes apply on the NEXT Start/launch — SPEC "changes affect only future segments", not
+/// a listening session already in progress.
+extension SettingsStore {
+    var vadThreshold: Float {
+        get {
+            defaults.object(forKey: "vadThreshold") == nil
+                ? 0.6 : defaults.float(forKey: "vadThreshold")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "vadThreshold") }
+    }
+
+    var silenceTimeout: TimeInterval {
+        get {
+            defaults.object(forKey: "silenceTimeout") == nil
+                ? 45 : defaults.double(forKey: "silenceTimeout")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "silenceTimeout") }
+    }
+
+    var minSegmentSpeech: TimeInterval {
+        get {
+            defaults.object(forKey: "minSegmentSpeech") == nil
+                ? 3 : defaults.double(forKey: "minSegmentSpeech")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "minSegmentSpeech") }
+    }
+
+    var preRollSeconds: TimeInterval {
+        get {
+            defaults.object(forKey: "preRollSeconds") == nil
+                ? 1.0 : defaults.double(forKey: "preRollSeconds")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "preRollSeconds") }
+    }
+
+    var wifiOnlyUpload: Bool {
+        get {
+            defaults.object(forKey: "wifiOnlyUpload") == nil
+                ? true : defaults.bool(forKey: "wifiOnlyUpload")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "wifiOnlyUpload") }
+    }
+
+    /// M6b settings toggle; Task 1's provider closure already requires a Keychain key before
+    /// picking Deepgram — this adds the explicit user-facing opt-in on top of that.
+    var deepgramEnabled: Bool {
+        get {
+            defaults.object(forKey: "deepgramEnabled") == nil
+                ? false : defaults.bool(forKey: "deepgramEnabled")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "deepgramEnabled") }
+    }
+}
+
 enum RetentionEnforcer {
     /// Post-transcription hook: returns true when the audio was deleted.
     static func applyAfterTranscription(m4aURL: URL, retention: AudioRetention) -> Bool {
