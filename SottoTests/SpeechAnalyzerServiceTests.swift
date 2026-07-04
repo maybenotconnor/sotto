@@ -32,4 +32,13 @@ struct SpeechAnalyzerServiceTests {
         #expect(result.backend == .speechAnalyzer)
         #expect(result.duration > 0.5)
     }
+
+    @Test func matchKeyIgnoresExtensionSubtagsAndSeparators() {
+        #expect(SpeechAnalyzerService.matchKey(for: Locale(identifier: "en_US"))
+            == SpeechAnalyzerService.matchKey(for: Locale(identifier: "en-US")))
+        #expect(SpeechAnalyzerService.matchKey(for: Locale(identifier: "en-US-u-rg-cazzzz"))
+            == SpeechAnalyzerService.matchKey(for: Locale(identifier: "en-US")))
+        #expect(SpeechAnalyzerService.matchKey(for: Locale(identifier: "en-US"))
+            != SpeechAnalyzerService.matchKey(for: Locale(identifier: "en-GB")))
+    }
 }

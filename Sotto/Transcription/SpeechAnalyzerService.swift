@@ -13,10 +13,28 @@ struct SpeechAnalyzerService: TranscriptionService {
         self.locale = locale
     }
 
+    /// Language+region comparison, NOT full bcp47 strings: Locale.current often carries
+    /// extension subtags (-u-rg-…, -u-ca-… from Region/calendar overrides) that never
+    /// appear in the framework's plain identifiers — exact matching false-negatives and
+    /// wrongly reports the installed model as missing (review finding).
+    ///
+    /// `locale.language.region` reads the region embedded in the language subtag itself
+    /// (e.g. "US" in "en-US-u-rg-cazzzz") and ignores the `-u-rg-` override; the top-level
+    /// `locale.region` honors that override instead (e.g. "CA" for the same identifier,
+    /// verified via `swift -e` probe). We want the former, so it's tried first — the
+    /// `locale.region` fallback only fires for locales lacking a region in the language
+    /// subtag at all.
+    static func matchKey(for locale: Locale) -> String {
+        let language = locale.language.languageCode?.identifier ?? ""
+        let region = locale.language.region?.identifier ?? locale.region?.identifier ?? ""
+        return "\(language)-\(region)"
+    }
+
     static func assetsInstalled(for locale: Locale) async -> Bool {
         guard SpeechTranscriber.isAvailable else { return false }
         let installed = await SpeechTranscriber.installedLocales
-        return installed.contains { $0.identifier(.bcp47) == locale.identifier(.bcp47) }
+        let target = matchKey(for: locale)
+        return installed.contains { matchKey(for: $0) == target }
     }
 
     func transcribe(file: URL) async throws -> TranscriptionResult {
@@ -55,8 +73,16 @@ struct SpeechAnalyzerService: TranscriptionService {
             return segments
         }()
 
-        _ = try await analyzer.analyzeSequence(from: audioFile)
-        try await analyzer.finalizeAndFinishThroughEndOfInput()
+        do {
+            _ = try await analyzer.analyzeSequence(from: audioFile)
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+        } catch {
+            // End the results sequence so the concurrent collection task terminates —
+            // otherwise the async-let cleanup at scope exit hangs forever and wedges the
+            // transcription queue's serial drain (review finding).
+            await analyzer.cancelAndFinishNow()
+            throw error
+        }
 
         let segments = try await collected
         let text = segments.map(\.text).joined(separator: " ")
