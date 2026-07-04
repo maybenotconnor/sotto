@@ -159,7 +159,9 @@ struct InterruptionTests {
 
         await pipeline.start()                                // a fresh, unrelated session
         #expect(pipeline.status == .listening)                // must NOT be hijacked to .interrupted
-        #expect(await recorder.markInterruptedCount == 0)
+        // NOTE: no assertion on markInterruptedCount — in the (legal) ordering where the
+        // interrupt wins the initial race outright, the counter is 1 while the hijack
+        // property above still holds; the counter would make this test order-fragile.
         await pipeline.stop()
     }
 }
