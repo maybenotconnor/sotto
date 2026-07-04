@@ -9,20 +9,54 @@ import UIKit
 @MainActor
 @Observable
 final class AppModel {
+    enum AssetState: Equatable {
+        case unknown
+        case installed
+        case notInstalled
+        case downloading(Double)
+        case failed(String)
+    }
+
     private(set) var pipeline: ListeningPipeline?
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
     private(set) var queue: TranscriptionQueue?
     private(set) var dayIndex: DayIndexStore?
+    private(set) var assetState: AssetState = .unknown
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
+    private let installer: any SpeechAssetInstalling
 
-    init() {
+    init(assetInstaller: (any SpeechAssetInstalling)? = nil) {
+        self.installer = assetInstaller ?? SpeechAssetInstaller()
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
             await self?.toggleFromIntent()
+        }
+    }
+
+    /// Requests + downloads the on-device speech model (SPEC "Model assets"). Entry is
+    /// allowed from `.notInstalled` (first run / never downloaded) OR `.failed` (retry after
+    /// a prior download error) — any other state (already `.installed`, mid-`.downloading`,
+    /// or `.unknown` before setup) is a no-op.
+    func downloadSpeechModel() async {
+        switch assetState {
+        case .notInstalled, .failed: break
+        default: return
+        }
+        assetState = .downloading(0)
+        do {
+            try await installer.install { [weak self] fraction in
+                Task { @MainActor [weak self] in
+                    if case .downloading = self?.assetState { self?.assetState = .downloading(fraction) }
+                }
+            }
+            assetState = .installed
+            if let queue { Task { await queue.drain() } }   // pending jobs can proceed now
+        } catch {
+            assetState = .failed(String(describing: error))
         }
     }
 
@@ -216,7 +250,8 @@ final class AppModel {
             // unnecessary since drain is also kicked per enqueue. Gate on backend
             // availability so a fresh offline install doesn't burn attempts on jobs that
             // can't possibly succeed yet (M6 adds the download UI + drain gating).
-            let onDeviceReady = await SpeechAnalyzerService.assetsInstalled(for: .current)
+            let onDeviceReady = await installer.assetsInstalled()
+            assetState = onDeviceReady ? .installed : .notInstalled
             let hasDeepgramKey = settings.deepgramEnabled && keychain.get("deepgramAPIKey") != nil
             if onDeviceReady || hasDeepgramKey {
                 Task { await transcriptionQueue.drain() }

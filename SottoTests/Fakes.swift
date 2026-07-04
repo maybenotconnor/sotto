@@ -262,6 +262,28 @@ struct EnvironmentallyBlockedTranscriptionService: TranscriptionService {
     }
 }
 
+actor FakeAssetInstaller: SpeechAssetInstalling {
+    var installed: Bool
+    var installError: Error?
+    private(set) var installCalls = 0
+
+    init(installed: Bool = false) {
+        self.installed = installed
+    }
+
+    func assetsInstalled() -> Bool { installed }
+
+    func install(progress: @escaping @Sendable (Double) -> Void) async throws {
+        installCalls += 1
+        if let installError { throw installError }
+        progress(0.5)
+        installed = true
+        progress(1.0)
+    }
+
+    func setError(_ error: Error?) { installError = error }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0

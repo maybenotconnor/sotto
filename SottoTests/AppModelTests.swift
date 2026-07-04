@@ -14,4 +14,30 @@ struct AppModelTests {
         _ = model
         #expect(IntentHandlers.shared.toggle != nil)   // cold background launch can toggle
     }
+
+    @Test func downloadSpeechModelTransitionsThroughStates() async throws {
+        let installer = FakeAssetInstaller(installed: false)
+        let model = AppModel(assetInstaller: installer)
+        await model.ensureSetUp()
+        #expect(model.assetState == .notInstalled)
+
+        await model.downloadSpeechModel()
+
+        #expect(model.assetState == .installed)
+        #expect(await installer.installCalls == 1)
+    }
+
+    @Test func downloadFailureLandsInFailedAndAllowsRetry() async throws {
+        struct Boom: Error {}
+        let installer = FakeAssetInstaller(installed: false)
+        await installer.setError(Boom())
+        let model = AppModel(assetInstaller: installer)
+        await model.ensureSetUp()
+        await model.downloadSpeechModel()
+        if case .failed = model.assetState {} else { Issue.record("expected .failed") }
+
+        await installer.setError(nil)
+        await model.downloadSpeechModel()
+        #expect(model.assetState == .installed)
+    }
 }
