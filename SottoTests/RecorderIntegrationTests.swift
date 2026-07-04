@@ -26,13 +26,35 @@ struct RecorderIntegrationTests {
         let service = FakeTranscriptionService(text: "integration transcript")
         let queue = TranscriptionQueue(
             storeURL: root.appendingPathComponent("jobs.json"), service: service, rootDirectory: root)
+        let dayIndex = DayIndexStore(rootDirectory: root)
         await machine.setSegmentHandler { segment in
             received.withLock { $0.append(segment) }
-            // Mirrors AppModel's wiring: enqueue + drain into the real queue rather than
-            // hand-rolling the transcode/transcribe/write steps in the test.
+            // Mirrors AppModel's wiring: record queued + enqueue + drain into the real
+            // queue rather than hand-rolling the transcode/transcribe/write steps in the test.
             Task {
+                await dayIndex.recordQueuedSegment(
+                    m4aURL: segment.m4aURL, startTime: segment.startDate, duration: segment.duration)
                 await queue.enqueue(segment)
                 await queue.drain()
+            }
+        }
+        // Mirrors AppModel's transition handler: update the index and apply the default
+        // (deleteAfterTranscription) retention policy on `.done`.
+        await queue.setTransitionHandler { transition in
+            Task {
+                let wordCount = transition.result.map {
+                    $0.text.split { $0.isWhitespace || $0.isNewline }.count
+                }
+                await dayIndex.updateSegment(
+                    m4aURL: transition.job.m4aURL,
+                    transcriptionState: transition.job.state.rawValue,
+                    backend: transition.result?.backend.rawValue,
+                    wordCount: wordCount)
+                if transition.job.state == .done,
+                   RetentionEnforcer.applyAfterTranscription(
+                       m4aURL: transition.job.m4aURL, retention: .deleteAfterTranscription) {
+                    await dayIndex.setAudioRemoved(m4aURL: transition.job.m4aURL)
+                }
             }
         }
 
@@ -74,15 +96,31 @@ struct RecorderIntegrationTests {
         #expect(await service.calls == 1)
 
         // The queue transcodes to the segment's own m4a destination and deletes its CAF:
-        #expect(FileManager.default.fileExists(atPath: segment.m4aURL.path))
         #expect(!FileManager.default.fileExists(atPath: segment.cafURL.path))
-        let file = try AVAudioFile(forReading: segment.m4aURL)
-        let duration = Double(file.length) / file.processingFormat.sampleRate
-        #expect(duration > 2.0)   // speech + pre-roll + trailing silence
 
-        // ... and writes the markdown transcript next to it.
+        // ... and writes the markdown transcript next to it (transcripts are never removed
+        // by retention).
         let md = segment.m4aURL.deletingPathExtension().appendingPathExtension("md")
         let transcript = try String(contentsOf: md, encoding: .utf8)
         #expect(transcript.contains("integration transcript"))
+
+        // The transition handler's retention step (mirroring AppModel) runs from its own
+        // fire-and-forget Task off the synchronous transitionHandler callback — poll the day
+        // index for it to settle rather than assume it completed synchronously with the
+        // job-state poll above (same rationale as that poll).
+        let dayDirectory = segment.m4aURL.deletingLastPathComponent()
+        var entry: DaySegmentEntry?
+        for _ in 0..<200 {
+            entry = await dayIndex.index(forDay: dayDirectory)?.segments.first
+            if entry?.hasAudio == false { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(FileManager.default.fileExists(
+            atPath: dayDirectory.appendingPathComponent("_day.json").path))
+        #expect(entry?.transcriptionState == "done")
+        #expect((entry?.wordCount ?? 0) > 0)
+        #expect(entry?.hasAudio == false)                     // default retention deleted the audio
+        #expect(!FileManager.default.fileExists(atPath: segment.m4aURL.path))   // audio gone
+        #expect(FileManager.default.fileExists(atPath: md.path))                // transcript kept
     }
 }

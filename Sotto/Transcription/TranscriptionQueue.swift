@@ -51,6 +51,8 @@ actor TranscriptionQueue {
                 jobs = persisted.map { $0.job(root: resolvedRoot) }
             } else if let loaded = try? JSONDecoder().decode([TranscriptionJob].self, from: data) {
                 jobs = loaded   // safety-net fallback; PersistedJob already tolerates v1 shape
+            } else {
+                logger.error("transcription-jobs.json exists but failed to decode under both the v2 and legacy v1 formats — starting with an empty queue")
             }
         }
     }
@@ -69,9 +71,12 @@ actor TranscriptionQueue {
 
     /// SPEC "Recording writer": salvaged audio must be transcribed, not just recovered.
     /// startDate parsed from the store layout (<yyyy-MM-dd>/<HH-mm-ss>.m4a); duration from
-    /// the audio; speechDuration unknown → duration.
-    func enqueueSalvaged(m4aURL: URL) {
-        guard !jobs.contains(where: { $0.m4aURL == m4aURL }) else { return }
+    /// the audio; speechDuration unknown → duration. Returns the created job (nil on
+    /// duplicate) so a caller (AppModel) can mirror it into the day index without
+    /// re-parsing the store layout itself.
+    @discardableResult
+    func enqueueSalvaged(m4aURL: URL) -> TranscriptionJob? {
+        guard !jobs.contains(where: { $0.m4aURL == m4aURL }) else { return nil }
         let day = m4aURL.deletingLastPathComponent().lastPathComponent
         let time = m4aURL.deletingPathExtension().lastPathComponent
         let formatter = DateFormatter()
@@ -82,10 +87,12 @@ actor TranscriptionQueue {
         let duration: TimeInterval = (try? AVAudioFile(forReading: m4aURL)).map {
             Double($0.length) / $0.processingFormat.sampleRate
         } ?? 0
-        jobs.append(TranscriptionJob(
+        let job = TranscriptionJob(
             id: UUID(), cafURL: nil, m4aURL: m4aURL, startDate: startDate,
-            duration: duration, speechDuration: duration, attempts: 0, state: .pending))
+            duration: duration, speechDuration: duration, attempts: 0, state: .pending)
+        jobs.append(job)
         persist()
+        return job
     }
 
     private enum StepOutcome {

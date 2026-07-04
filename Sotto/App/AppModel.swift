@@ -13,6 +13,8 @@ final class AppModel {
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
     private(set) var queue: TranscriptionQueue?
+    private(set) var dayIndex: DayIndexStore?
+    let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
 
@@ -50,6 +52,8 @@ final class AppModel {
         }
 
         let store = SegmentStore()
+        let dayIndexStore = DayIndexStore()
+        self.dayIndex = dayIndexStore
         let heartbeat = HeartbeatStore()
 
         // Unconditional launch sweep (SPEC "Recording writer"): a failed finalize can leave
@@ -65,6 +69,14 @@ final class AppModel {
 
         // The banner stays gated on the heartbeat (a crash), not on salvage results alone.
         if heartbeat.indicatesUncleanShutdown {
+            // Capture the heartbeat's timestamp BEFORE clearing it below — it's the last
+            // moment listening was known-alive, i.e. the spec's `gap` entry (SPEC "Unclean
+            // shutdown detection"). Read here rather than trust `indicatesUncleanShutdown`'s
+            // own internal read, since that one doesn't hand the timestamp back.
+            if let beat = heartbeat.read() {
+                await dayIndexStore.recordGap(
+                    onDayOf: beat.timestamp, from: beat.timestamp, reason: "uncleanShutdown")
+            }
             recoveryNotice = salvaged.isEmpty
                 ? "Listening stopped unexpectedly last session."
                 : "Listening stopped unexpectedly — recovered \(salvaged.count) unfinished recording(s)."
@@ -98,11 +110,19 @@ final class AppModel {
             // BEFORE the gated drain decision below — on an asset-less device these jobs
             // wait as `.pending` just like any other (Fix 1 keeps that safe).
             for url in salvaged {
-                await transcriptionQueue.enqueueSalvaged(m4aURL: url)
+                if let job = await transcriptionQueue.enqueueSalvaged(m4aURL: url) {
+                    await dayIndexStore.recordQueuedSegment(
+                        m4aURL: job.m4aURL, startTime: job.startDate, duration: job.duration)
+                }
             }
 
+            let settings = self.settings
             await recorder.setSegmentHandler { segment in
                 Task {
+                    await dayIndexStore.recordQueuedSegment(
+                        m4aURL: segment.m4aURL,
+                        startTime: segment.startDate,
+                        duration: segment.duration)
                     await transcriptionQueue.enqueue(segment)
                     await transcriptionQueue.drain()
                 }
@@ -144,6 +164,29 @@ final class AppModel {
             sessionObserver.startObserving()
             observer = sessionObserver
 
+            // Terminal transitions (done/failed) drive the day index and the retention
+            // policy (SPEC "File output" retention: audio deleted after transcription by
+            // default; transcripts are never touched here). Synchronous @Sendable — the
+            // queue actor must not be re-entered mid-notification — so each side effect is
+            // dispatched into its own Task.
+            await transcriptionQueue.setTransitionHandler { transition in
+                Task {
+                    let wordCount = transition.result.map {
+                        $0.text.split { $0.isWhitespace || $0.isNewline }.count
+                    }
+                    await dayIndexStore.updateSegment(
+                        m4aURL: transition.job.m4aURL,
+                        transcriptionState: transition.job.state.rawValue,
+                        backend: transition.result?.backend.rawValue,
+                        wordCount: wordCount)
+                    if transition.job.state == .done,
+                       RetentionEnforcer.applyAfterTranscription(
+                           m4aURL: transition.job.m4aURL, retention: settings.audioRetention) {
+                        await dayIndexStore.setAudioRemoved(m4aURL: transition.job.m4aURL)
+                    }
+                }
+            }
+
             // Leftovers from the previous run drain at launch (SPEC); the resume path is
             // unnecessary since drain is also kicked per enqueue. Gate on backend
             // availability so a fresh offline install doesn't burn attempts on jobs that
@@ -155,6 +198,14 @@ final class AppModel {
             } else {
                 let notice = "Transcription model not installed — recordings are kept and will be transcribed later."
                 recoveryNotice = recoveryNotice.map { "\($0)\n\(notice)" } ?? notice
+            }
+
+            // Launch retention sweep (keepSevenDays only; a no-op under the other policies).
+            // Fire-and-forget: nothing else waits on it. Scoped to the SegmentStore's own
+            // root (Documents/Sotto), NEVER bare Documents — Documents is Files-app-writable,
+            // so a broader sweep risks deleting files the user placed there themselves.
+            Task.detached {
+                _ = RetentionEnforcer.sweep(root: store.rootDirectory, retention: settings.audioRetention)
             }
         } catch {
             setupError = String(describing: error)
