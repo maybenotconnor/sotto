@@ -93,3 +93,40 @@ actor FakeSpeechDetector: SpeechDetecting {
         index = 0
     }
 }
+
+/// Records appended samples; finalize/discard bookkeeping for state-machine tests.
+final class FakeSegmentWriter: SegmentWriting {
+    private(set) var writtenSampleCount = 0
+    private(set) var appendCalls: [Int] = []      // sample counts per append
+    private(set) var finalized = false
+    private(set) var discarded = false
+    let m4aURL = URL(fileURLWithPath: "/tmp/fake-\(UUID().uuidString).m4a")
+
+    func append(_ samples: [Float]) throws {
+        appendCalls.append(samples.count)
+        writtenSampleCount += samples.count
+    }
+
+    func finalize() throws -> URL {
+        finalized = true
+        return m4aURL
+    }
+
+    func discard() {
+        discarded = true
+    }
+}
+
+/// Hands out FakeSegmentWriters and remembers them for assertions.
+final class FakeWriterFactory: SegmentWriterFactory, @unchecked Sendable {
+    // @unchecked: mutated only from within the single recorder actor under test.
+    private(set) var writers: [FakeSegmentWriter] = []
+    private(set) var startDates: [Date] = []
+
+    func makeWriter(startDate: Date) throws -> any SegmentWriting {
+        let writer = FakeSegmentWriter()
+        writers.append(writer)
+        startDates.append(startDate)
+        return writer
+    }
+}
