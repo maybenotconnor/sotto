@@ -23,8 +23,17 @@ struct RecorderIntegrationTests {
             store: store, config: config)
 
         let received = Mutex<[FinalizedSegment]>([])
+        let service = FakeTranscriptionService(text: "integration transcript")
+        let queue = TranscriptionQueue(
+            storeURL: root.appendingPathComponent("jobs.json"), service: service)
         await machine.setSegmentHandler { segment in
             received.withLock { $0.append(segment) }
+            // Mirrors AppModel's wiring: enqueue + drain into the real queue rather than
+            // hand-rolling the transcode/transcribe/write steps in the test.
+            Task {
+                await queue.enqueue(segment)
+                await queue.drain()
+            }
         }
 
         _ = await machine.beginListening()
@@ -52,27 +61,28 @@ struct RecorderIntegrationTests {
         #expect(segments.count == 1)
         let segment = segments[0]
 
-        // Segment close is fast now: CAF is on disk, m4a doesn't exist yet (M4 Task 1 —
-        // transcode is deferred to the transcription queue, arriving in Task 3).
-        #expect(FileManager.default.fileExists(atPath: segment.cafURL.path))
-        #expect(!FileManager.default.fileExists(atPath: segment.m4aURL.path))
+        // The segment handler's enqueue+drain runs in a detached Task (mirroring AppModel's
+        // wiring), so poll briefly for the job to reach a terminal state rather than assume
+        // synchronous completion.
+        var job: TranscriptionJob?
+        for _ in 0..<200 {
+            job = await queue.jobs.first
+            if let state = job?.state, state != .pending { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(job?.state == .done)
+        #expect(await service.calls == 1)
 
-        // Do the queue's job manually here so the rest of the assertions still exercise a
-        // real transcode:
-        try CAFSegmentWriter.transcodeToM4A(caf: segment.cafURL, m4a: segment.m4aURL)
-
-        let m4as = try FileManager.default.subpathsOfDirectory(atPath: root.path)
-            .filter { $0.hasSuffix(".m4a") }
-        #expect(m4as.count == 1)
-        let file = try AVAudioFile(forReading: root.appendingPathComponent(m4as[0]))
+        // The queue transcodes to the segment's own m4a destination and deletes its CAF:
+        #expect(FileManager.default.fileExists(atPath: segment.m4aURL.path))
+        #expect(!FileManager.default.fileExists(atPath: segment.cafURL.path))
+        let file = try AVAudioFile(forReading: segment.m4aURL)
         let duration = Double(file.length) / file.processingFormat.sampleRate
         #expect(duration > 2.0)   // speech + pre-roll + trailing silence
 
-        // The queue owns CAF deletion from Task 3 on; simulate that here before asserting
-        // no CAF is left behind.
-        try FileManager.default.removeItem(at: segment.cafURL)
-        let cafs = try FileManager.default.subpathsOfDirectory(atPath: root.path)
-            .filter { $0.hasSuffix(".caf") }
-        #expect(cafs.isEmpty)
+        // ... and writes the markdown transcript next to it.
+        let md = segment.m4aURL.deletingPathExtension().appendingPathExtension("md")
+        let transcript = try String(contentsOf: md, encoding: .utf8)
+        #expect(transcript.contains("integration transcript"))
     }
 }

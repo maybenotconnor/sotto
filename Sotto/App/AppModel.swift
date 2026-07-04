@@ -12,6 +12,7 @@ final class AppModel {
     private(set) var pipeline: ListeningPipeline?
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
+    private(set) var queue: TranscriptionQueue?
     private var setUpStarted = false
     private var observer: AudioSessionObserver?
 
@@ -72,6 +73,25 @@ final class AppModel {
                 detector: detector,
                 writerFactory: CAFSegmentWriterFactory(store: store),
                 store: store)
+
+            // Backend selection: on-device by default; Deepgram only when a key exists AND
+            // assets make sense to skip (full Settings toggle is M6).
+            let keychain = KeychainStore()
+            let service: any TranscriptionService
+            if let _ = keychain.get("deepgramAPIKey") {
+                service = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
+            } else {
+                service = SpeechAnalyzerService()
+            }
+            let transcriptionQueue = TranscriptionQueue(service: service)
+            self.queue = transcriptionQueue
+            await recorder.setSegmentHandler { segment in
+                Task {
+                    await transcriptionQueue.enqueue(segment)
+                    await transcriptionQueue.drain()
+                }
+            }
+
             let source = PhoneMicAudioSource()
             let newPipeline = ListeningPipeline(
                 source: source, recorder: recorder, heartbeat: heartbeat,
@@ -107,6 +127,19 @@ final class AppModel {
             }
             sessionObserver.startObserving()
             observer = sessionObserver
+
+            // Leftovers from the previous run drain at launch (SPEC); the resume path is
+            // unnecessary since drain is also kicked per enqueue. Gate on backend
+            // availability so a fresh offline install doesn't burn attempts on jobs that
+            // can't possibly succeed yet (M6 adds the download UI + drain gating).
+            let onDeviceReady = await SpeechAnalyzerService.assetsInstalled(for: .current)
+            let hasDeepgramKey = keychain.get("deepgramAPIKey") != nil
+            if onDeviceReady || hasDeepgramKey {
+                Task { await transcriptionQueue.drain() }
+            } else {
+                let notice = "Transcription model not installed — recordings are kept and will be transcribed later."
+                recoveryNotice = recoveryNotice.map { "\($0)\n\(notice)" } ?? notice
+            }
         } catch {
             setupError = String(describing: error)
         }
