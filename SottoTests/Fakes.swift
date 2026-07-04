@@ -194,3 +194,16 @@ actor FakeRecorder: SegmentRecording {
         RecorderSnapshot(state: .interrupted, finalizedCount: 0, lastEvent: nil)
     }
 }
+
+@MainActor
+final class FakeLiveActivityController: LiveActivityControlling {
+    private(set) var startedCount = 0
+    private(set) var endedCount = 0
+    private(set) var updates: [(label: String, count: Int, paused: Bool)] = []
+
+    func sessionStarted(at date: Date) { startedCount += 1 }
+    func update(stateLabel: String, conversationCount: Int, isPaused: Bool) {
+        updates.append((stateLabel, conversationCount, isPaused))
+    }
+    func sessionEnded() { endedCount += 1 }
+}
