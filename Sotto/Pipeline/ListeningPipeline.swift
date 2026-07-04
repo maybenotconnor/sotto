@@ -41,7 +41,7 @@ final class ListeningPipeline {
     private var pumpTask: Task<Void, Never>?
     private var isTransitioning = false
     private var queuedStops: [CheckedContinuation<Void, Never>] = []
-    private var pendingInterrupt = false
+    private var pendingPark: HaltReason?
 
     init(
         source: any AudioSource,
@@ -77,7 +77,7 @@ final class ListeningPipeline {
             let stream = try await source.start()
             let snapshot = await recorder.beginListening()
             apply(snapshot)
-            eventLog.append("Listening…")
+            log("Listening…")
             pumpTask = Task { [weak self] in
                 for await chunk in stream {
                     await self?.handle(chunk)
@@ -87,20 +87,20 @@ final class ListeningPipeline {
             liveActivity?.sessionStarted(at: Date())
         } catch {
             status = .idle
-            eventLog.append("Start failed: \(error)")
+            log("Start failed: \(error)")
         }
         isTransitioning = false
         if !queuedStops.isEmpty {
-            pendingInterrupt = false                 // an explicit stop wins over an interrupt
+            pendingPark = nil                 // an explicit stop wins over an interrupt
             if status != .idle {
                 await performHalt(.stop)
             } else {
                 resumeQueuedStops()
             }
-        } else if pendingInterrupt {
-            pendingInterrupt = false
+        } else if let reason = pendingPark {
+            pendingPark = nil
             if status != .idle {
-                await performHalt(.park(.systemInterruption))
+                await performHalt(.park(reason))
             }
         }
     }
@@ -127,7 +127,7 @@ final class ListeningPipeline {
     /// Never transcribes inline (SPEC): the recorder only finalizes; transcription is M4's queue.
     func interrupt() async {
         if isTransitioning {
-            pendingInterrupt = true
+            pendingPark = .systemInterruption
             return
         }
         guard status != .idle, status != .interrupted else { return }
@@ -139,7 +139,7 @@ final class ListeningPipeline {
     /// something they did on purpose, but the activity survives so Resume still works.
     func pauseByUser() async {
         if isTransitioning {
-            pendingInterrupt = true
+            pendingPark = .userPause
             return
         }
         guard status != .idle, status != .interrupted else { return }
@@ -159,7 +159,7 @@ final class ListeningPipeline {
             let snapshot = await recorder.beginListening()
             apply(snapshot)
             haltReason = nil
-            eventLog.append("Resumed")
+            log("Resumed")
             pumpTask = Task { [weak self] in
                 for await chunk in stream {
                     await self?.handle(chunk)
@@ -168,23 +168,23 @@ final class ListeningPipeline {
             await notifications?.cancelPausedNotification()
         } catch {
             status = .interrupted
-            eventLog.append("Resume failed: \(error)")
+            log("Resume failed: \(error)")
         }
         isTransitioning = false
         if !queuedStops.isEmpty {
-            pendingInterrupt = false
+            pendingPark = nil
             if status != .idle {
                 await performHalt(.stop)
             } else {
                 resumeQueuedStops()
             }
-        } else if pendingInterrupt {
-            pendingInterrupt = false
+        } else if let reason = pendingPark {
+            pendingPark = nil
             // .recording/.silence count too: a chunk processed during resume's own awaits can
             // advance status past .listening, and dropping the interrupt then leaves a
             // live-looking UI over a dead engine. Only idle/interrupted make it moot.
             if status != .idle && status != .interrupted {
-                await performHalt(.park(.systemInterruption))
+                await performHalt(.park(reason))
             }
         }
     }
@@ -213,7 +213,7 @@ final class ListeningPipeline {
             apply(snapshot)
             status = .idle   // defensive; apply() already set + heartbeat-recorded idle
             haltReason = nil
-            eventLog.append("Stopped")
+            log("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
         case .park(let reason):
@@ -222,7 +222,7 @@ final class ListeningPipeline {
             haltReason = reason
             let snapshot = await recorder.markInterrupted()
             apply(snapshot)
-            eventLog.append(reason == .userPause ? "Paused by you" : "Paused — call")
+            log(reason == .userPause ? "Paused by you" : "Paused — call")
             if reason == .systemInterruption {
                 // A user-initiated pause needs no fallback nag — they know they paused it.
                 await notifications?.schedulePausedNotification()
@@ -234,11 +234,11 @@ final class ListeningPipeline {
         // its waiters resume; a pending interrupt against an idle/interrupted pipeline
         // is meaningless and must not leak into a future session.
         if !queuedStops.isEmpty && status != .idle {
-            pendingInterrupt = false
+            pendingPark = nil
             await performHalt(.stop)   // bounded recursion: the inner halt ends at .idle
             return                     // the inner call resumed the waiters
         }
-        pendingInterrupt = false
+        pendingPark = nil
         resumeQueuedStops()
     }
 
@@ -280,13 +280,19 @@ final class ListeningPipeline {
                 isPaused: status == .interrupted)
         }
         finalizedCount = snapshot.finalizedCount
-        if let event = snapshot.lastEvent, event != eventLog.last {
-            eventLog.append(event)
-            // Unbounded growth over a long-running session would be a slow memory leak
-            // (M2 carryover) — the in-app list only ever shows the tail anyway.
-            if eventLog.count > 200 {
-                eventLog.removeFirst(eventLog.count - 200)
-            }
+        if let event = snapshot.lastEvent {
+            log(event)
+        }
+    }
+
+    /// Unbounded growth over a long-running session would be a slow memory leak (M2
+    /// carryover) — the in-app list only ever shows the tail anyway. Every append site
+    /// routes through here so the cap and back-to-back dedupe are always applied.
+    private func log(_ line: String) {
+        if line == eventLog.last { return }
+        eventLog.append(line)
+        if eventLog.count > 200 {
+            eventLog.removeFirst(eventLog.count - 200)
         }
     }
 

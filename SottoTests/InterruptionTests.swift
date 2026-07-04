@@ -234,4 +234,22 @@ struct InterruptionTests {
         #expect(pipeline.haltReason == .systemInterruption)
         #expect(await notifications.scheduled == 1)
     }
+
+    @Test func userPauseDuringStartKeepsUserPauseSemantics() async throws {
+        let source = SlowStartAudioSource()
+        let notifications = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(),
+            liveActivity: nil, notifications: notifications)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.pauseByUser()                 // mid-start: must pend as USER pause
+        await source.releaseStart()
+        await starting
+
+        #expect(pipeline.status == .interrupted)
+        #expect(pipeline.haltReason == .userPause)   // not mislabeled as a call
+        #expect(await notifications.scheduled == 0)  // and no spurious fallback notification
+    }
 }
