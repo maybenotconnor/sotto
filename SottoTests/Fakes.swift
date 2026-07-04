@@ -164,6 +164,7 @@ actor FakeRecorder: SegmentRecording {
     private(set) var processedAfterFinish = 0
     private(set) var finishCount = 0
     private(set) var beginCount = 0
+    private(set) var markInterruptedCount = 0
 
     init(stateScript: [Int: RecorderState] = [:]) {
         self.stateScript = stateScript
@@ -191,7 +192,9 @@ actor FakeRecorder: SegmentRecording {
     }
 
     func markInterrupted() -> RecorderSnapshot {
-        RecorderSnapshot(state: .interrupted, finalizedCount: 0, lastEvent: nil)
+        markInterruptedCount += 1
+        finished = true
+        return RecorderSnapshot(state: .interrupted, finalizedCount: 0, lastEvent: "Interrupted")
     }
 }
 

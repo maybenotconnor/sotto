@@ -122,4 +122,21 @@ struct ListeningPipelineTests {
         }
         #expect(stopped)
     }
+
+    @Test func liveActivityFollowsSessionLifecycle() async throws {
+        let source = FakeAudioSource()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(stateScript: [1: .recording]),
+            liveActivity: activity)
+
+        await pipeline.start()
+        #expect(activity.startedCount == 1)
+        await source.emitSilentChunks(count: 2)
+        await source.finish()
+        await pipeline.waitUntilDrained()
+        #expect(activity.updates.contains { $0.label == "Recording" })
+        await pipeline.stop()
+        #expect(activity.endedCount == 1)
+    }
 }

@@ -1,0 +1,126 @@
+import Testing
+@testable import Sotto
+
+@MainActor
+struct InterruptionTests {
+    @Test func interruptHaltsAndParks() async throws {
+        let source = FakeAudioSource()
+        let recorder = FakeRecorder()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: activity)
+
+        await pipeline.start()
+        await source.emitSilentChunks(count: 2)
+        await pipeline.interrupt()
+
+        #expect(pipeline.status == .interrupted)
+        #expect(await recorder.markInterruptedCount == 1)
+        #expect(await recorder.processedAfterFinish == 0)      // drained before parking
+        #expect(await source.stopCallCount == 1)               // engine torn down
+        #expect(activity.updates.last?.label == "Paused — call")
+        #expect(activity.updates.last?.paused == true)
+        #expect(activity.endedCount == 0)                      // activity survives interruption
+    }
+
+    @Test func interruptWhenIdleIsNoOp() async throws {
+        let recorder = FakeRecorder()
+        let pipeline = ListeningPipeline(
+            source: FakeAudioSource(), recorder: recorder, liveActivity: nil)
+        await pipeline.interrupt()
+        #expect(pipeline.status == .idle)
+        #expect(await recorder.markInterruptedCount == 0)
+    }
+
+    @Test func resumeFromInterruptionRestartsCleanly() async throws {
+        let source = FakeAudioSource()
+        let recorder = FakeRecorder()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: activity)
+
+        await pipeline.start()
+        await pipeline.interrupt()
+        await pipeline.resumeFromInterruption()
+
+        #expect(pipeline.status == .listening)
+        #expect(await source.startCallCount == 2)
+        #expect(await source.stopCallCount >= 2)               // defensive stop before restart
+        #expect(await recorder.beginCount == 2)
+        #expect(activity.updates.last?.paused == false)
+    }
+
+    @Test func resumeWhenNotInterruptedIsNoOp() async throws {
+        let source = FakeAudioSource()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(), liveActivity: nil)
+        await pipeline.start()
+        await pipeline.resumeFromInterruption()                // listening, not interrupted
+        #expect(pipeline.status == .listening)
+        #expect(await source.startCallCount == 1)
+        await pipeline.stop()
+    }
+
+    @Test func stopFromInterruptedGoesIdleAndEndsActivity() async throws {
+        let source = FakeAudioSource()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(), liveActivity: activity)
+
+        await pipeline.start()
+        await pipeline.interrupt()
+        await pipeline.stop()
+
+        #expect(pipeline.status == .idle)
+        #expect(activity.endedCount == 1)
+    }
+
+    @Test func interruptDuringStartIsHonoredAfterStartCompletes() async throws {
+        let source = SlowStartAudioSource()
+        let recorder = FakeRecorder()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: nil)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.interrupt()                             // mid-start: pends, returns
+        await source.releaseStart()
+        await starting
+
+        #expect(pipeline.status == .interrupted)
+        #expect(await recorder.markInterruptedCount == 1)
+    }
+
+    @Test func queuedStopBeatsPendingInterrupt() async throws {
+        let source = SlowStartAudioSource()
+        let recorder = FakeRecorder()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: nil)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.interrupt()                             // pends
+        async let stopping: Void = pipeline.stop()             // queues (stop wins)
+        for _ in 0..<5 { await Task.yield() }
+        await source.releaseStart()
+        _ = await (starting, stopping)
+
+        #expect(pipeline.status == .idle)                      // stop won
+        #expect(await recorder.finishCount == 1)
+        #expect(await recorder.markInterruptedCount == 0)
+    }
+
+    @Test func toggleFromIntentCoversAllThreeStates() async throws {
+        let source = FakeAudioSource()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(), liveActivity: nil)
+
+        await pipeline.toggleFromIntent()                      // idle → start
+        #expect(pipeline.status == .listening)
+        await pipeline.interrupt()
+        await pipeline.toggleFromIntent()                      // interrupted → resume
+        #expect(pipeline.status == .listening)
+        await pipeline.toggleFromIntent()                      // active → stop
+        #expect(pipeline.status == .idle)
+    }
+}

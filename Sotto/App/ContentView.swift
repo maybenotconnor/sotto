@@ -93,12 +93,12 @@ private struct PipelineView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button(pipeline.status == .idle ? "Start Listening" : "Stop") {
+            Button(buttonLabel) {
                 Task {
-                    if pipeline.status == .idle {
-                        await pipeline.start()
-                    } else {
-                        await pipeline.stop()
+                    switch pipeline.status {
+                    case .idle: await pipeline.start()
+                    case .interrupted: await pipeline.resumeFromInterruption()
+                    default: await pipeline.stop()
                     }
                 }
             }
@@ -113,6 +113,14 @@ private struct PipelineView: View {
         .padding(.top, 24)
     }
 
+    private var buttonLabel: String {
+        switch pipeline.status {
+        case .idle: "Start Listening"
+        case .interrupted: "Resume"
+        default: "Stop"
+        }
+    }
+
     private var statusLabel: String {
         switch pipeline.status {
         case .idle: "Idle"
@@ -120,6 +128,7 @@ private struct PipelineView: View {
         case .listening: "Listening"
         case .recording: "Recording"
         case .silence: "Silence"
+        case .interrupted: "Paused — call"
         }
     }
 
@@ -130,6 +139,7 @@ private struct PipelineView: View {
         case .listening: .green
         case .recording: .red
         case .silence: .orange
+        case .interrupted: .orange
         }
     }
 }
