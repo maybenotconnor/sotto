@@ -20,6 +20,8 @@ protocol AudioSource: Sendable {
     /// Contract: MUST terminate the stream returned by `start()` (finish its continuation)
     /// on every path — `ListeningPipeline.stop()` awaits stream termination to drain
     /// in-flight chunks and would otherwise never return, freezing the MainActor.
-    /// Must also be safe to call when the source was never started (no-op).
+    /// Must also be safe to call when the source was never started (no-op), and be
+    /// idempotent: `ListeningPipeline.deinit` calls `stop()` again even after an owner
+    /// has already stopped the pipeline, so a second call must be harmless.
     func stop() async
 }
