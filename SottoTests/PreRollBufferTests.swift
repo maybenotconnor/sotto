@@ -27,4 +27,19 @@ struct PreRollBufferTests {
         buffer.removeAll()
         #expect(buffer.snapshot().isEmpty)
     }
+
+    @Test func exactCapacityFillRetainsAllSamplesInOrder() {
+        var buffer = PreRollBuffer(capacity: 4)
+        buffer.append([1, 2])
+        buffer.append([3, 4])
+        #expect(buffer.snapshot() == [1, 2, 3, 4])
+    }
+
+    @Test func wrapsCorrectlyAcrossManyAppends() {
+        var buffer = PreRollBuffer(capacity: 5)
+        buffer.append([1, 2, 3])
+        buffer.append([4, 5, 6])
+        buffer.append([7])
+        #expect(buffer.snapshot() == [3, 4, 5, 6, 7])
+    }
 }

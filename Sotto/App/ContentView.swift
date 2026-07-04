@@ -20,10 +20,11 @@ struct ContentView: View {
             }
             .navigationTitle("Sotto")
         }
-        .task { setUp() }
+        .task { await setUp() }
     }
 
-    private func setUp() {
+    @MainActor
+    private func setUp() async {
         guard pipeline == nil, setupError == nil else { return }
         guard let modelURL = Bundle.main.url(
             forResource: SileroSpeechDetector.modelResourceName,
@@ -33,7 +34,11 @@ struct ContentView: View {
             return
         }
         do {
-            let detector = try SileroSpeechDetector(modelURL: modelURL)
+            // CoreML load/compile can take hundreds of ms (seconds on a cold cache) —
+            // off the MainActor so the loading indicator actually renders and animates.
+            let detector = try await Task.detached(priority: .userInitiated) {
+                try SileroSpeechDetector(modelURL: modelURL)
+            }.value
             pipeline = ListeningPipeline(source: PhoneMicAudioSource(), detector: detector)
         } catch {
             setupError = String(describing: error)
