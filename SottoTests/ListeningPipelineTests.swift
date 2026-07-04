@@ -88,9 +88,10 @@ struct ListeningPipelineTests {
 
         async let starting: Void = pipeline.start()
         await source.waitUntilStartRequested()
-        await pipeline.stop()            // wins the race while start() is suspended
+        async let stopping: Void = pipeline.stop()   // queued; suspends until the deferred stop completes
+        for _ in 0..<5 { await Task.yield() }        // let stop() reach the queue while the gate is closed
         await source.releaseStart()
-        await starting
+        _ = await (starting, stopping)
 
         #expect(pipeline.status == .idle)
         await source.emitSilentChunks(count: 2)
@@ -105,15 +106,44 @@ struct ListeningPipelineTests {
 
         async let firstStart: Void = pipeline.start()
         await source.waitUntilStartRequested()
-        await pipeline.stop()                              // queued: start is mid-flight
+        async let stopping: Void = pipeline.stop()         // queued: start is mid-flight
         async let secondStart: Void = pipeline.start()     // must no-op: a transition is in flight
-        for _ in 0..<5 { await Task.yield() }              // let secondStart hit the guard while the gate is closed
+        for _ in 0..<5 { await Task.yield() }              // let both hit their guards while the gate is closed
         await source.releaseStart()
-        _ = await (firstStart, secondStart)
+        _ = await (firstStart, stopping, secondStart)
 
         #expect(pipeline.status == .idle)                  // the queued stop won after the start completed
         await source.emitSilentChunks(count: 2)
         for _ in 0..<10 { await Task.yield() }
         #expect(pipeline.preRollSnapshot().isEmpty)        // no orphaned pump is consuming chunks
+    }
+
+    @Test func statusIsStartingWhileSourceStartIsInFlight() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        #expect(pipeline.status == .starting)   // NOT .listening: no audio is flowing yet
+        await source.releaseStart()
+        await starting
+        #expect(pipeline.status == .listening)
+        await pipeline.stop()
+    }
+
+    @Test func queuedStopReturnsOnlyOncePipelineIsIdle() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        async let stopping: Void = pipeline.stop()
+        for _ in 0..<5 { await Task.yield() }
+        await source.releaseStart()
+        await stopping                        // must resume only after the deferred stop drained
+        #expect(pipeline.status == .idle)     // stop()'s return now implies idle
+        await starting
     }
 }

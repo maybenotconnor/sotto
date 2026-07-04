@@ -73,6 +73,7 @@ private struct PipelineView: View {
     private var statusLabel: String {
         switch pipeline.status {
         case .idle: "Idle"
+        case .starting: "Starting…"
         case .listening: "Listening"
         case .speechActive: "Speech"
         }
@@ -81,6 +82,7 @@ private struct PipelineView: View {
     private var statusColor: Color {
         switch pipeline.status {
         case .idle: .secondary
+        case .starting: .secondary
         case .listening: .green
         case .speechActive: .orange
         }

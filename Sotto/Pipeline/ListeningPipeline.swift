@@ -13,6 +13,7 @@ import Observation
 final class ListeningPipeline {
     enum Status: Equatable {
         case idle
+        case starting
         case listening
         case speechActive
     }
@@ -24,8 +25,12 @@ final class ListeningPipeline {
     private let detector: any SpeechDetecting
     private var preRoll: PreRollBuffer
     private var pumpTask: Task<Void, Never>?
+    // Transitions are mutually exclusive: at most one start()/stop() crosses an await at a
+    // time. A stop() arriving during an in-flight transition suspends until the pipeline is
+    // actually idle (so stop()'s return always implies idle+drained); a start() arriving
+    // during any in-flight transition is a no-op.
     private var isTransitioning = false
-    private var stopRequestedDuringTransition = false
+    private var queuedStops: [CheckedContinuation<Void, Never>] = []
 
     init(source: any AudioSource, detector: any SpeechDetecting, preRollSamples: Int = 16_000) {
         self.source = source
@@ -36,38 +41,42 @@ final class ListeningPipeline {
     func start() async {
         guard status == .idle, !isTransitioning else { return }
         isTransitioning = true
-        status = .listening
-        var started = false
+        status = .starting   // truthful: no audio flows until source.start() succeeds
         do {
             let stream = try await source.start()
+            status = .listening
             eventLog.append("Listening…")
-            pumpTask = Task {
+            pumpTask = Task { [weak self] in
                 for await chunk in stream {
-                    await self.handle(chunk)
+                    await self?.handle(chunk)
                 }
             }
-            started = true
         } catch {
             status = .idle
             eventLog.append("Start failed: \(error)")
         }
         isTransitioning = false
-        let stopWasRequested = stopRequestedDuringTransition
-        stopRequestedDuringTransition = false
-        if started && stopWasRequested {
-            await stop()   // honor the stop that arrived mid-start
+        if !queuedStops.isEmpty {
+            if status == .listening {
+                await performStop()      // drains, idles, then resumes the waiters
+            } else {
+                resumeQueuedStops()      // start failed: already idle, nothing to stop
+            }
         }
     }
 
-    /// When a transition is already in flight, `stop()` queues and returns immediately —
-    /// the pipeline is NOT yet idle when it returns in that case. The drain happens later,
-    /// when the in-flight `start()` honors the queued stop. (M2 will revisit these semantics.)
     func stop() async {
         if isTransitioning {
-            stopRequestedDuringTransition = true
+            // Suspend until the in-flight transition's deferred stop completes: callers
+            // may assume the pipeline is idle and drained when stop() returns.
+            await withCheckedContinuation { queuedStops.append($0) }
             return
         }
         guard status != .idle else { return }
+        await performStop()
+    }
+
+    private func performStop() async {
         isTransitioning = true
         await source.stop()          // finish the stream: no new chunks after this
         await pumpTask?.value        // drain chunks already in flight to quiescence
@@ -77,7 +86,15 @@ final class ListeningPipeline {
         status = .idle
         eventLog.append("Stopped")
         isTransitioning = false
-        stopRequestedDuringTransition = false
+        resumeQueuedStops()
+    }
+
+    private func resumeQueuedStops() {
+        let waiters = queuedStops
+        queuedStops = []
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     /// Test hook: waits for the pump task to finish draining a closed stream.
