@@ -88,4 +88,44 @@ struct DayIndexTests {
         try Data([0x7b, 0x00]).write(to: dir.appendingPathComponent("_day.json"))
         #expect(await store.index(forDay: dir) == nil)
     }
+
+    @Test func rebuildsIndexFromMarkdownAndOrphanAudio() async throws {
+        let root = tempRoot()
+        let dir = root.appendingPathComponent("2026-03-14")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // A transcribed segment: .md (spec frontmatter) + .m4a
+        let md = """
+        ---
+        date: 2026-03-14T09:15:30-04:00
+        duration: 342
+        speechEnd: 2026-03-14T09:20:12-04:00
+        backend: speechAnalyzer
+        ---
+
+        # Conversation — 9:15 AM
+
+        Hello there general conversation words here.
+        """
+        try md.write(to: dir.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+        try Data([0x01]).write(to: dir.appendingPathComponent("09-15-30.m4a"))
+        // An untranscribed segment: audio only
+        try Data([0x01]).write(to: dir.appendingPathComponent("10-42-18.m4a"))
+
+        let index = DayIndexRebuilder.rebuild(dayDirectory: dir)
+
+        #expect(index.date == "2026-03-14")
+        #expect(index.segments.count == 2)
+        let done = index.segments.first { $0.id == "09-15-30" }
+        #expect(done?.transcriptionState == "done")
+        #expect(done?.backend == "speechAnalyzer")
+        #expect(done?.duration == 342)
+        #expect(done?.hasAudio == true)
+        #expect((done?.wordCount ?? 0) >= 6)                 // body words counted
+        let queued = index.segments.first { $0.id == "10-42-18" }
+        #expect(queued?.transcriptionState == "queued")
+        #expect(queued?.wordCount == nil)
+        // Sorted by startTime:
+        #expect(index.segments.map(\.id) == ["09-15-30", "10-42-18"])
+    }
 }
