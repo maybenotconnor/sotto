@@ -7,6 +7,7 @@ actor FakeAudioSource: AudioSource {
 
     private var continuation: AsyncStream<AudioChunk>.Continuation?
     private(set) var startCallCount = 0
+    private(set) var stopCallCount = 0
 
     func start() async throws -> AsyncStream<AudioChunk> {
         startCallCount += 1
@@ -16,6 +17,7 @@ actor FakeAudioSource: AudioSource {
     }
 
     func stop() {
+        stopCallCount += 1
         continuation?.finish()
         continuation = nil
     }

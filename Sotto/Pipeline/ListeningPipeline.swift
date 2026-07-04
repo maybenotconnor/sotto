@@ -38,6 +38,16 @@ final class ListeningPipeline {
         self.preRoll = PreRollBuffer(capacity: preRollSamples)
     }
 
+    deinit {
+        // Belt-and-braces: if an owner drops the pipeline without stop(), stop the source
+        // so the stream finishes and the (weak-self) pump exits — otherwise the live audio
+        // stack (engine, tap, VAD) would keep running with no reachable owner.
+        let source = self.source
+        Task.detached {
+            await source.stop()
+        }
+    }
+
     func start() async {
         guard status == .idle, !isTransitioning else { return }
         isTransitioning = true

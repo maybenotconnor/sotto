@@ -146,4 +146,21 @@ struct ListeningPipelineTests {
         #expect(pipeline.status == .idle)     // stop()'s return now implies idle
         await starting
     }
+
+    @Test func droppingPipelineWithoutStopTearsDownSource() async throws {
+        let source = FakeAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        var pipeline: ListeningPipeline? = ListeningPipeline(source: source, detector: detector)
+        await pipeline?.start()
+        await source.emitSilentChunks(count: 2)
+
+        pipeline = nil   // owner forgot stop(); deinit must still tear down the source
+
+        var stopped = false
+        for _ in 0..<50 where !stopped {
+            try await Task.sleep(for: .milliseconds(10))
+            stopped = await source.stopCallCount > 0
+        }
+        #expect(stopped)   // without deinit teardown the audio stack would run forever
+    }
 }

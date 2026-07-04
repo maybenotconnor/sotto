@@ -17,5 +17,9 @@ protocol AudioSource: Sendable {
     var isAvailable: Bool { get }
     /// Emits fixed-size chunks of 4096 samples (256 ms @ 16 kHz).
     func start() async throws -> AsyncStream<AudioChunk>
+    /// Contract: MUST terminate the stream returned by `start()` (finish its continuation)
+    /// on every path — `ListeningPipeline.stop()` awaits stream termination to drain
+    /// in-flight chunks and would otherwise never return, freezing the MainActor.
+    /// Must also be safe to call when the source was never started (no-op).
     func stop() async
 }
