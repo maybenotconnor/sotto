@@ -469,7 +469,7 @@ Design language: stock SwiftUI, system colors/typography (supports the "transpar
 ### 1. Main screen
 
 - **Purpose:** one glance = current state; one tap = start/stop.
-- **Layout:** large state dial/indicator (Idle / Listening / Recording / Paused — call / Paused) with subtle animation while listening; primary Start/Stop button; today's summary line ("6 conversations · 47 min"); tap summary → List view. Battery-impact hint shown while active.
+- **Layout:** large state dial/indicator (Idle / Listening / Recording / Paused — call / Paused) with subtle animation while listening; primary Start/Stop button; today's summary line ("6 conversations · 47 min"); tap summary → List view. ~~Battery-impact hint shown while active~~ _(removed 2026-07-04, product decision: don't surface battery in UI)_.
 - **States:** _Idle_ (Start prominent); _active_ (Stop + state label + elapsed); _mic permission denied_ (inline explainer + "Open Settings" deep link — Start disabled); _model downloading_ (progress inline; Start stays ENABLED — recordings queue safely and are transcribed once the model is ready. Copy: "Preparing on-device transcription — recordings are saved and will be transcribed when it's ready." Amended 2026-07-04 per M6a review adjudication.); _disk guard tripped_ (warning banner); _post-crash_ (one-line gap banner, dismissible).
 - **Edge:** Stop while Recording/Silence → finalize current segment first, then Idle (show brief "Saving…" state).
 
@@ -498,7 +498,7 @@ Design language: stock SwiftUI, system colors/typography (supports the "transpar
 ### 5. Onboarding (first launch, 4 cards + 2 system prompts)
 
 1. _What it does_ — listens all day, records only speech, everything stays on your phone.
-2. _What you'll see_ — orange mic indicator + Live Activity are always visible while listening; battery expectation ("roughly comparable to music playback; heavy days may need a top-up").
+2. _What you'll see_ — orange mic indicator + Live Activity are always visible while listening; ~~battery expectation ("roughly comparable to music playback; heavy days may need a top-up")~~ _(removed 2026-07-04, product decision: don't surface battery in UI)_.
 3. _Your responsibility_ — one-party vs all-party consent in plain words; CT phone-call rule handled automatically (calls stop recording); "laws differ by state" + link. Require an explicit "I understand" tap.
 4. _Permissions_ — mic prompt (`AVAudioApplication.requestRecordPermission`), then notification prompt (or `.provisional` silently — dev choice, document it).
 5. If needed: speech-model download card with progress before first Start. (No speech-recognition permission exists — do not add one.)

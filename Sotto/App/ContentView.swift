@@ -87,13 +87,6 @@ private struct MainScreen: View {
 
             startStopButton
 
-            if isActive {
-                Text("Listening uses roughly as much battery as music playback.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
             Spacer(minLength: 0)
         }
         .padding(.top, 12)
@@ -129,6 +122,10 @@ private struct MainScreen: View {
                 Button("Try again") { Task { await model.downloadSpeechModel() } }
                     .font(.footnote)
             }
+        } else if case .unsupported = model.assetState {
+            NoticeBanner(
+                text: "On-device transcription isn't available on this device (Simulator or non-Apple-Intelligence hardware). Recordings are saved; transcripts need a supported iPhone or a Deepgram key in Settings.",
+                color: .secondary)
         }
         if micDenied {
             VStack(spacing: 6) {

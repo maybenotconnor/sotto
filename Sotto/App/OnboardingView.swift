@@ -20,7 +20,7 @@ struct OnboardingView: View {
             card(
                 icon: "eye.circle.fill", tint: .orange,
                 title: "Always visible",
-                body: "While listening you'll always see the orange mic indicator and a lock-screen Live Activity. Battery use is roughly comparable to music playback; heavy days may need a top-up.",
+                body: "While listening you'll always see the orange mic indicator and a lock-screen Live Activity, so recording is never invisible.",
                 button: "Continue") { page = 2 }
                 .tag(1)
             consentCard.tag(2)
@@ -70,6 +70,11 @@ struct OnboardingView: View {
             case .downloading(let fraction):
                 ProgressView(value: fraction).padding(.horizontal, 48)
                 Text("Downloading the speech model…").font(.footnote).foregroundStyle(.secondary)
+            case .unsupported:
+                Text("This device can't run on-device transcription — recordings still save and transcribe on a supported iPhone.")
+                    .multilineTextAlignment(.center).padding(.horizontal)
+                Button("Continue") { completeIfConsented() }
+                    .buttonStyle(.borderedProminent)
             default:
                 Text("Sotto transcribes on this iPhone — nothing leaves your device. The model downloads once.")
                     .multilineTextAlignment(.center).padding(.horizontal)

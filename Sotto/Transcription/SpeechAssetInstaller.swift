@@ -3,6 +3,10 @@ import Speech
 
 protocol SpeechAssetInstalling: Sendable {
     func assetsInstalled() async -> Bool
+    /// Whether this device can run on-device transcription at all (Simulator and
+    /// non-Apple-Intelligence hardware cannot — SPEC's model-download UI must never be shown
+    /// there, since no download will ever succeed).
+    func deviceSupported() async -> Bool
     /// Requests + downloads the speech model for the current locale, reporting 0…1.
     /// Throws on failure (incl. offline-at-first-run — SPEC requires explicit handling).
     func install(progress: @escaping @Sendable (Double) -> Void) async throws
@@ -12,7 +16,7 @@ protocol SpeechAssetInstalling: Sendable {
 /// pre-installed (Notes uses them) but never guaranteed. NEVER called from unit tests —
 /// downloads are real; the app calls it from the Main screen / onboarding flow.
 struct SpeechAssetInstaller: SpeechAssetInstalling {
-    enum InstallerError: Error { case unsupportedDevice, noRequestNeededButStillMissing }
+    enum InstallerError: Error, Equatable { case unsupportedDevice, noRequestNeededButStillMissing }
 
     let locale: Locale
 
@@ -22,6 +26,10 @@ struct SpeechAssetInstaller: SpeechAssetInstalling {
 
     func assetsInstalled() async -> Bool {
         await SpeechAnalyzerService.assetsInstalled(for: locale)
+    }
+
+    func deviceSupported() async -> Bool {
+        SpeechTranscriber.isAvailable
     }
 
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {

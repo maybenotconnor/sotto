@@ -83,6 +83,7 @@ struct SettingsView: View {
                 switch model.assetState {
                 case .installed: Text("Installed").foregroundStyle(.secondary)
                 case .downloading(let fraction): ProgressView(value: fraction).frame(width: 80)
+                case .unsupported: Text("Unavailable on this device").foregroundStyle(.secondary)
                 default: Button("Download") { Task { await model.downloadSpeechModel() } }
                 }
             }

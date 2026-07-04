@@ -302,6 +302,7 @@ struct FakeNetworkMonitor: NetworkMonitoring {
 actor FakeAssetInstaller: SpeechAssetInstalling {
     var installed: Bool
     var installError: Error?
+    var supported = true
     private(set) var installCalls = 0
 
     init(installed: Bool = false) {
@@ -309,6 +310,8 @@ actor FakeAssetInstaller: SpeechAssetInstalling {
     }
 
     func assetsInstalled() -> Bool { installed }
+
+    func deviceSupported() -> Bool { supported }
 
     func install(progress: @escaping @Sendable (Double) -> Void) async throws {
         installCalls += 1
@@ -319,6 +322,7 @@ actor FakeAssetInstaller: SpeechAssetInstalling {
     }
 
     func setError(_ error: Error?) { installError = error }
+    func setSupported(_ value: Bool) { supported = value }
 }
 
 @MainActor

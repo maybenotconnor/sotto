@@ -15,6 +15,9 @@ final class AppModel {
         case notInstalled
         case downloading(Double)
         case failed(String)
+        /// Simulator or non-Apple-Intelligence hardware: on-device transcription cannot ever
+        /// run here, so this is NOT a download failure — no retry/download affordance shown.
+        case unsupported
     }
 
     /// SPEC Main screen "today summary": conversation count + total minutes for the
@@ -93,7 +96,14 @@ final class AppModel {
             assetState = .installed
             if let queue { Task { await queue.drain() } }   // pending jobs can proceed now
         } catch {
-            assetState = .failed(String(describing: error))
+            // Simulator/non-Apple-Intelligence hardware: this is NOT a network failure — the
+            // UI must not blame the connection for something no retry can ever fix.
+            if let installerError = error as? SpeechAssetInstaller.InstallerError,
+               installerError == .unsupportedDevice {
+                assetState = .unsupported
+            } else {
+                assetState = .failed(String(describing: error))
+            }
         }
     }
 
@@ -405,12 +415,17 @@ final class AppModel {
             // unnecessary since drain is also kicked per enqueue. Gate on backend
             // availability so a fresh offline install doesn't burn attempts on jobs that
             // can't possibly succeed yet (M6 adds the download UI + drain gating).
-            let onDeviceReady = await installer.assetsInstalled()
-            assetState = onDeviceReady ? .installed : .notInstalled
+            // Simulator/non-Apple-Intelligence hardware never gets a download affordance —
+            // no download can ever succeed there, so `.unsupported` short-circuits the
+            // installed/notInstalled check entirely (M6b follow-up: truthful failure states).
+            let deviceSupported = await installer.deviceSupported()
+            let assetsInstalled = await installer.assetsInstalled()
+            let onDeviceReady = deviceSupported && assetsInstalled
+            assetState = !deviceSupported ? .unsupported : (onDeviceReady ? .installed : .notInstalled)
             let hasDeepgramKey = settings.deepgramEnabled && keychain.get("deepgramAPIKey") != nil
             if onDeviceReady || hasDeepgramKey {
                 Task { await transcriptionQueue.drain() }
-            } else {
+            } else if deviceSupported {
                 let notice = "Transcription model not installed — recordings are kept and will be transcribed later."
                 recoveryNotice = recoveryNotice.map { "\($0)\n\(notice)" } ?? notice
             }

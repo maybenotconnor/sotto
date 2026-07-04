@@ -40,4 +40,21 @@ struct AppModelTests {
         await model.downloadSpeechModel()
         #expect(model.assetState == .installed)
     }
+
+    /// M6b follow-up: Simulator / non-Apple-Intelligence hardware must land in the truthful
+    /// `.unsupported` state (no download button, no network-failure copy) rather than
+    /// `.notInstalled` — and `downloadSpeechModel()` must stay a no-op there since no download
+    /// could ever succeed.
+    @Test func unsupportedDeviceSkipsDownloadAndStaysNoOp() async throws {
+        let installer = FakeAssetInstaller(installed: false)
+        await installer.setSupported(false)
+        let model = AppModel(assetInstaller: installer)
+
+        await model.ensureSetUp()
+        #expect(model.assetState == .unsupported)
+
+        await model.downloadSpeechModel()
+        #expect(model.assetState == .unsupported)
+        #expect(await installer.installCalls == 0)
+    }
 }
