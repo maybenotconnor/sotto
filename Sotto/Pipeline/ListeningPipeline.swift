@@ -32,6 +32,11 @@ final class ListeningPipeline {
         status = .listening   // claim before the first await so reentrant starts bounce off the guard
         do {
             let stream = try await source.start()
+            guard status == .listening else {
+                // A concurrent stop() won while the source was starting; undo and bail.
+                await source.stop()
+                return
+            }
             eventLog.append("Listening…")
             pumpTask = Task {
                 for await chunk in stream {

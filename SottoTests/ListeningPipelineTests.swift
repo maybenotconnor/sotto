@@ -59,7 +59,7 @@ struct ListeningPipelineTests {
         async let second: Void = pipeline.start()
         _ = await (first, second)
 
-        #expect(await source.startCount() == 1)
+        #expect(await source.startCallCount == 1)
         #expect(pipeline.status == .listening)
         await pipeline.stop()
     }
@@ -74,7 +74,27 @@ struct ListeningPipelineTests {
         // Deliberately no waitUntilDrained(): stop() itself must drain then clear.
         await pipeline.stop()
 
+        // Give any orphaned pump task scheduler time — a leaked pump would repopulate preRoll here.
+        for _ in 0..<10 { await Task.yield() }
+
         #expect(pipeline.preRollSnapshot().isEmpty)
         #expect(pipeline.status == .idle)
+    }
+
+    @Test func stopDuringStartLeavesPipelineIdleWithNoPump() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.stop()            // wins the race while start() is suspended
+        await source.releaseStart()
+        await starting
+
+        #expect(pipeline.status == .idle)
+        await source.emitSilentChunks(count: 2)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(pipeline.preRollSnapshot().isEmpty)   // no live pump is consuming chunks
     }
 }

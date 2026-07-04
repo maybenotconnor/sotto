@@ -15,10 +15,6 @@ actor FakeAudioSource: AudioSource {
         return stream
     }
 
-    func startCount() -> Int {
-        startCallCount
-    }
-
     func stop() {
         continuation?.finish()
         continuation = nil
@@ -32,6 +28,48 @@ actor FakeAudioSource: AudioSource {
 
     func finish() {
         continuation?.finish()
+    }
+}
+
+/// AudioSource whose start() suspends until the test releases it — for ordering races deterministically.
+actor SlowStartAudioSource: AudioSource {
+    nonisolated let sourceType: AudioSourceType = .phoneMic
+    nonisolated var isAvailable: Bool { true }
+
+    private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private var startGate: CheckedContinuation<Void, Never>?
+    private var startRequested: CheckedContinuation<Void, Never>?
+    private var startWasRequested = false
+
+    func start() async throws -> AsyncStream<AudioChunk> {
+        startWasRequested = true
+        startRequested?.resume()
+        startRequested = nil
+        await withCheckedContinuation { startGate = $0 }
+        let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
+        self.continuation = continuation
+        return stream
+    }
+
+    func waitUntilStartRequested() async {
+        if startWasRequested { return }
+        await withCheckedContinuation { startRequested = $0 }
+    }
+
+    func releaseStart() {
+        startGate?.resume()
+        startGate = nil
+    }
+
+    func stop() {
+        continuation?.finish()
+        continuation = nil
+    }
+
+    func emitSilentChunks(count: Int) {
+        for _ in 0..<count {
+            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: 4096), hostTime: 0))
+        }
     }
 }
 
