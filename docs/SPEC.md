@@ -165,7 +165,7 @@ VAD detection quality context: FluidAudio's published benchmark is ~96% accuracy
 
 ## Recording writer
 
-AAC .m4a, 16 kHz mono, ~64 kbps → ~0.5 MB/min (a 4-h speech day ≈ 120 MB).
+AAC .m4a, 16 kHz mono, 48 kbps → ~0.36 MB/min (a 4-h speech day ≈ 86 MB). _(Implementation note 2026-07-03: the spec originally said 64 kbps, but Apple's AAC-LC encoder rejects bitrates above 48 kbps at 16 kHz mono — `kAudioCodecUnsupportedFormatError`.)_
 
 **Crash-safety requirement:** a recorder that dies mid-file (jetsam, battery, crash) must not lose the whole segment to an unfinalized container. Acceptable implementations, developer's choice:
 
