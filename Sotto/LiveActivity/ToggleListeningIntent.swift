@@ -1,10 +1,15 @@
 import AppIntents
 import Foundation
 
-extension Notification.Name {
-    /// Posted by ToggleListeningIntent.perform() — the app observes this and toggles the
-    /// pipeline. Indirection keeps this file dependency-free for the widget target.
-    static let sottoToggleListening = Notification.Name("sottoToggleListening")
+/// Indirection seam so this shared file (compiled into both the app AND widget extension
+/// targets) stays dependency-free: the widget target never registers `toggle`, so
+/// perform() there is simply a no-op await.
+@MainActor
+final class IntentHandlers {
+    static let shared = IntentHandlers()
+
+    /// Registered by AppModel at construction; awaited by ToggleListeningIntent.perform().
+    var toggle: (() async -> Void)?
 }
 
 /// AudioRecordingIntent (iOS 18+) is Apple's sanctioned mechanism for starting/stopping
@@ -14,12 +19,16 @@ extension Notification.Name {
 struct ToggleListeningIntent: AudioRecordingIntent {
     static let title: LocalizedStringResource = "Pause or resume listening"
 
+    // @MainActor: perform() itself must share IntentHandlers' isolation domain — reading a
+    // MainActor-isolated closure property from a nonisolated context and calling it there
+    // would require the closure to be @Sendable, which an `async -> Void` capturing
+    // [weak self] on AppModel is not.
+    @MainActor
     func perform() async throws -> some IntentResult {
-        // Post on the MainActor: AppIntent.perform() carries no thread guarantee, and the
-        // app-side .onReceive consumer mutates SwiftUI state.
-        await MainActor.run {
-            NotificationCenter.default.post(name: .sottoToggleListening, object: nil)
-        }
+        // Awaiting the real toggle keeps the background-launched app process alive until
+        // the mic actually starts/stops (M3 review Critical #2: fire-and-forget posts are
+        // dropped when no scene/observer exists on a cold background launch).
+        await IntentHandlers.shared.toggle?()
         return .result()
     }
 }

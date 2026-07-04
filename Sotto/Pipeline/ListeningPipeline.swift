@@ -19,9 +19,19 @@ final class ListeningPipeline {
         case interrupted
     }
 
+    /// Why the pipeline is currently .interrupted — drives both the Live Activity/event-log
+    /// label and whether a fallback "resume?" notification makes sense (a user-initiated
+    /// pause needs no nag; a system interruption does).
+    enum HaltReason: Sendable, Equatable {
+        case systemInterruption
+        case userPause
+    }
+
     private(set) var status: Status = .idle
     private(set) var eventLog: [String] = []
     private(set) var finalizedCount = 0
+    /// Non-nil only while status == .interrupted.
+    private(set) var haltReason: HaltReason?
 
     private let source: any AudioSource
     private let recorder: any SegmentRecording
@@ -90,7 +100,7 @@ final class ListeningPipeline {
         } else if pendingInterrupt {
             pendingInterrupt = false
             if status != .idle {
-                await performHalt(.interrupt)
+                await performHalt(.park(.systemInterruption))
             }
         }
     }
@@ -121,7 +131,19 @@ final class ListeningPipeline {
             return
         }
         guard status != .idle, status != .interrupted else { return }
-        await performHalt(.interrupt)
+        await performHalt(.park(.systemInterruption))
+    }
+
+    /// User-initiated pause (Live Activity / intent toggle while active). Unlike interrupt(),
+    /// this is a deliberate choice — no fallback "resume?" notification nags the user about
+    /// something they did on purpose, but the activity survives so Resume still works.
+    func pauseByUser() async {
+        if isTransitioning {
+            pendingInterrupt = true
+            return
+        }
+        guard status != .idle, status != .interrupted else { return }
+        await performHalt(.park(.userPause))
     }
 
     /// Recovery from .interrupted (intent tap, notification tap, or app foreground).
@@ -136,6 +158,7 @@ final class ListeningPipeline {
             let stream = try await source.start()
             let snapshot = await recorder.beginListening()
             apply(snapshot)
+            haltReason = nil
             eventLog.append("Resumed")
             pumpTask = Task { [weak self] in
                 for await chunk in stream {
@@ -161,21 +184,23 @@ final class ListeningPipeline {
             // advance status past .listening, and dropping the interrupt then leaves a
             // live-looking UI over a dead engine. Only idle/interrupted make it moot.
             if status != .idle && status != .interrupted {
-                await performHalt(.interrupt)
+                await performHalt(.park(.systemInterruption))
             }
         }
     }
 
-    /// Entry point for the Live Activity intent / notification tap.
+    /// Entry point for the Live Activity intent / notification tap. Unlike the in-app Stop
+    /// button (which always fully stops), the "else" branch here parks as a user-initiated
+    /// pause — the Live Activity survives so a subsequent tap can Resume.
     func toggleFromIntent() async {
         switch status {
         case .idle: await start()
         case .interrupted: await resumeFromInterruption()
-        default: await stop()
+        default: await pauseByUser()
         }
     }
 
-    private enum HaltMode { case stop, interrupt }
+    private enum HaltMode { case stop, park(HaltReason) }
 
     private func performHalt(_ mode: HaltMode) async {
         isTransitioning = true
@@ -187,14 +212,21 @@ final class ListeningPipeline {
             let snapshot = await recorder.finishAndFinalize()
             apply(snapshot)
             status = .idle   // defensive; apply() already set + heartbeat-recorded idle
+            haltReason = nil
             eventLog.append("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
-        case .interrupt:
+        case .park(let reason):
+            // Set BEFORE apply(): apply()'s status-change branch reads haltReason to pick
+            // the Live Activity label for the (about to be entered) .interrupted status.
+            haltReason = reason
             let snapshot = await recorder.markInterrupted()
             apply(snapshot)
-            eventLog.append("Paused — call")
-            await notifications?.schedulePausedNotification()
+            eventLog.append(reason == .userPause ? "Paused by you" : "Paused — call")
+            if reason == .systemInterruption {
+                // A user-initiated pause needs no fallback nag — they know they paused it.
+                await notifications?.schedulePausedNotification()
+            }
         }
         isTransitioning = false
         // Reconcile requests that arrived during this halt, regardless of entry point:
@@ -236,31 +268,38 @@ final class ListeningPipeline {
             status = newStatus
             heartbeat?.record(snapshot.state)
             liveActivity?.update(
-                stateLabel: Self.activityLabel(for: newStatus),
+                stateLabel: activityLabel(for: newStatus),
                 conversationCount: snapshot.finalizedCount,
                 isPaused: newStatus == .interrupted)
         } else if finalizedCount != snapshot.finalizedCount {
             // Status-unchanged path: the branch above already pushed the fresh count when
             // status ALSO changed, so this only fires standalone — no double update.
             liveActivity?.update(
-                stateLabel: Self.activityLabel(for: status),
+                stateLabel: activityLabel(for: status),
                 conversationCount: snapshot.finalizedCount,
                 isPaused: status == .interrupted)
         }
         finalizedCount = snapshot.finalizedCount
         if let event = snapshot.lastEvent, event != eventLog.last {
             eventLog.append(event)
+            // Unbounded growth over a long-running session would be a slow memory leak
+            // (M2 carryover) — the in-app list only ever shows the tail anyway.
+            if eventLog.count > 200 {
+                eventLog.removeFirst(eventLog.count - 200)
+            }
         }
     }
 
-    static func activityLabel(for status: Status) -> String {
+    /// Instance (not static): the .interrupted case depends on `haltReason`, which is
+    /// per-pipeline state, not derivable from `status` alone.
+    func activityLabel(for status: Status) -> String {
         switch status {
         case .idle: "Stopped"
         case .starting: "Starting…"
         case .listening: "Listening"
         case .recording: "Recording"
         case .silence: "Listening"
-        case .interrupted: "Paused — call"
+        case .interrupted: haltReason == .userPause ? "Paused by you" : "Paused — call"
         }
     }
 }

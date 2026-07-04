@@ -120,8 +120,9 @@ struct InterruptionTests {
         await pipeline.interrupt()
         await pipeline.toggleFromIntent()                      // interrupted → resume
         #expect(pipeline.status == .listening)
-        await pipeline.toggleFromIntent()                      // active → stop
-        #expect(pipeline.status == .idle)
+        await pipeline.toggleFromIntent()                      // active → pause by user (not stop)
+        #expect(pipeline.status == .interrupted)
+        #expect(pipeline.haltReason == .userPause)
     }
 
     @Test func stopQueuedDuringInterruptHaltStillFullyStops() async throws {
@@ -198,5 +199,39 @@ struct InterruptionTests {
         await resuming
 
         #expect(pipeline.status == .interrupted)            // pended interrupt honored, not dropped
+    }
+
+    @Test func pauseByUserParksWithoutFallbackNotification() async throws {
+        let source = FakeAudioSource()
+        let notifications = FakeNotificationScheduler()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(),
+            liveActivity: activity, notifications: notifications)
+
+        await pipeline.start()
+        await pipeline.pauseByUser()
+
+        #expect(pipeline.status == .interrupted)
+        #expect(pipeline.haltReason == .userPause)
+        #expect(await notifications.scheduled == 0)          // user chose this; no "resume" nag
+        #expect(activity.updates.last?.label == "Paused by you")
+        #expect(activity.endedCount == 0)                    // activity survives — Resume works
+
+        await pipeline.resumeFromInterruption()
+        #expect(pipeline.status == .listening)
+        #expect(pipeline.haltReason == nil)
+    }
+
+    @Test func systemInterruptionStillSchedulesNotification() async throws {
+        let source = FakeAudioSource()
+        let notifications = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(),
+            liveActivity: nil, notifications: notifications)
+        await pipeline.start()
+        await pipeline.interrupt()
+        #expect(pipeline.haltReason == .systemInterruption)
+        #expect(await notifications.scheduled == 1)
     }
 }
