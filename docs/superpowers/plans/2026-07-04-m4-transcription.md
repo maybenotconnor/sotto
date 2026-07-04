@@ -1030,6 +1030,8 @@ private struct DeepgramResponse: Decodable {
 **Interfaces:**
 - Consumes: everything. AppModel gains `private(set) var queue: TranscriptionQueue?`.
 
+BINDING ORDERING REQUIREMENT (Task 3 review): `OrphanSalvager.salvage()` must FULLY COMPLETE before the `TranscriptionQueue` is constructed or drained — salvage and the queue both call `transcodeToM4A`, and concurrent execution over the same CAF is a race. `ensureSetUp()` already awaits salvage before any construction; keep the queue construction strictly after that await. Also note: `drain()` now loops until quiescent (retries happen within one call), and jobs.json persists ABSOLUTE URLs — a known fragility across container migration, deferred to M5's FileStore (store Documents-relative paths).
+
 - [ ] **Step 1: Wiring in `AppModel.ensureSetUp()`** (after the recorder is constructed, before the pipeline):
 
 ```swift
