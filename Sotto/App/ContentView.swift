@@ -56,6 +56,9 @@ struct ContentView: View {
             guard phase == .active else { return }
             micDenied = AVAudioApplication.shared.recordPermission == .denied
             Task { await model.refreshTodaySummary() }
+            // SPEC: leftovers drain on next resume/foreground — also releases jobs that were
+            // gated on Wi-Fi-only uploads while the user was away from home.
+            Task { await model.queue?.drain() }
         }
     }
 }

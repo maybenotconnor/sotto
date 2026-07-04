@@ -311,6 +311,28 @@ struct TranscriptionQueueTests {
         #expect(await service.calls == 2)
     }
 
+    /// M6b review Fix #3: a user deleting a conversation while its transcribe() call is still
+    /// in flight must not resurrect the .md/job once transcription finally completes.
+    @Test func deletedM4ADuringTranscribeIsNotResurrected() async throws {
+        let dir = tempDir()
+        let segment = try makeSegment(in: dir)
+        let service = GatedTranscriptionService(text: "should never be written")
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"), service: service, rootDirectory: dir)
+        await queue.enqueue(segment)
+
+        async let draining: Void = queue.drain()
+        await service.waitUntilCalled()   // transcode already ran; m4a exists, transcribe in flight
+        #expect(FileManager.default.fileExists(atPath: segment.m4aURL.path))
+        try FileManager.default.removeItem(at: segment.m4aURL)   // simulate mid-transcription delete
+        await service.release()
+        await draining
+
+        #expect(await queue.jobs.isEmpty)   // not resurrected as a lingering job
+        let md = dir.appendingPathComponent("seg.md")
+        #expect(!FileManager.default.fileExists(atPath: md.path))   // no markdown written back
+    }
+
     @Test func removeJobDropsIt() async throws {
         let dir = tempDir()
         let queue = TranscriptionQueue(

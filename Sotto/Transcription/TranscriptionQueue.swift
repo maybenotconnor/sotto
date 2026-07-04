@@ -249,6 +249,16 @@ actor TranscriptionQueue {
             guard let doneIndex = jobs.firstIndex(where: { $0.id == jobID }) else {
                 return .progressed
             }
+            // delete-mid-transcription: never resurrect a deleted conversation. If the user
+            // deleted this segment while the transcribe() await above was in flight, the job
+            // itself may already be gone (handled by the guard above, via `removeJob`) — but
+            // if the job survived and only the m4a was removed, don't write a markdown
+            // transcript back into a directory the user just cleared out.
+            guard FileManager.default.fileExists(atPath: jobs[doneIndex].m4aURL.path) else {
+                jobs.removeAll { $0.id == jobID }
+                persist()
+                return .progressed
+            }
             _ = try TranscriptMarkdownWriter.write(result: result, job: jobs[doneIndex])
             jobs[doneIndex].state = .done
             transitionHandler?(JobTransition(job: jobs[doneIndex], result: result))

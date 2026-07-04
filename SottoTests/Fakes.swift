@@ -255,6 +255,37 @@ actor FakeTranscriptionService: TranscriptionService {
     }
 }
 
+/// TranscriptionService whose `transcribe()` suspends mid-flight until released — lets a test
+/// delete the job's m4a while a transcribe is in progress (delete-mid-transcription race,
+/// M6b review Fix #3), deterministically, instead of racing a real timer against the queue.
+actor GatedTranscriptionService: TranscriptionService {
+    nonisolated let backend = TranscriptionBackend.speechAnalyzer
+    private let text: String
+    private var gate: CheckedContinuation<Void, Never>?
+    private var calledContinuation: CheckedContinuation<Void, Never>?
+    private var wasCalled = false
+
+    init(text: String) { self.text = text }
+
+    func transcribe(file: URL) async throws -> TranscriptionResult {
+        wasCalled = true
+        calledContinuation?.resume()
+        calledContinuation = nil
+        await withCheckedContinuation { gate = $0 }
+        return TranscriptionResult(text: text, segments: [], duration: 1, backend: backend)
+    }
+
+    func waitUntilCalled() async {
+        if wasCalled { return }
+        await withCheckedContinuation { calledContinuation = $0 }
+    }
+
+    func release() {
+        gate?.resume()
+        gate = nil
+    }
+}
+
 struct EnvironmentallyBlockedTranscriptionService: TranscriptionService {
     let backend = TranscriptionBackend.speechAnalyzer
     func transcribe(file: URL) async throws -> TranscriptionResult {

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// SPEC "Settings": Listening / Transcription / Storage / Notifications / About & Legal.
 struct SettingsView: View {
@@ -16,6 +17,7 @@ struct SettingsView: View {
     @State private var keyTestResult: Bool?
     @State private var usage: AppModel.StorageUsage?
     @State private var showPowerUser = false
+    @State private var notificationStatus = "—"
 
     var body: some View {
         Form {
@@ -37,6 +39,13 @@ struct SettingsView: View {
             wifiOnly = settings.wifiOnlyUpload
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
+            let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
+            notificationStatus = switch notificationSettings.authorizationStatus {
+            case .authorized: "On"
+            case .provisional: "Quiet delivery"
+            case .denied: "Off"
+            default: "Not requested"
+            }
         }
     }
 
@@ -60,7 +69,7 @@ struct SettingsView: View {
                     .onChange(of: preRoll) { _, value in model.settings.preRollSeconds = value }
                 Stepper("Min segment: \(Int(minSegment)) s", value: $minSegment, in: 1...10)
                     .onChange(of: minSegment) { _, value in model.settings.minSegmentSpeech = value }
-                Text("Changes apply the next time you start listening.")
+                Text("Changes apply after the app next launches.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -81,14 +90,16 @@ struct SettingsView: View {
                 .onChange(of: deepgramEnabled) { _, value in model.settings.deepgramEnabled = value }
             if deepgramEnabled {
                 SecureField("Deepgram API key", text: $deepgramKey)
-                    .onChange(of: deepgramKey) { _, value in
-                        if value.isEmpty { KeychainStore().delete("deepgramAPIKey") }
-                        else { KeychainStore().set(value, for: "deepgramAPIKey") }
-                        keyTestResult = nil
-                    }
+                    .onChange(of: deepgramKey) { _, _ in keyTestResult = nil }
+                    .onSubmit { persistKey() }
                 HStack {
-                    Button("Test key") { Task { keyTestResult = await model.testDeepgramKey(deepgramKey) } }
-                        .disabled(deepgramKey.isEmpty)
+                    Button("Test key") {
+                        Task {
+                            persistKey()   // testing an untyped-submitted key must still work
+                            keyTestResult = await model.testDeepgramKey(deepgramKey)
+                        }
+                    }
+                    .disabled(deepgramKey.isEmpty)
                     if let result = keyTestResult {
                         Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundStyle(result ? .green : .red)
@@ -126,7 +137,7 @@ struct SettingsView: View {
 
     private var notificationsSection: some View {
         Section("Notifications") {
-            LabeledContent("Paused-listening alerts", value: "Quiet delivery")
+            LabeledContent("Paused-listening alerts", value: notificationStatus)
             Button("Open notification settings") {
                 if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
                     UIApplication.shared.open(url)
@@ -134,6 +145,15 @@ struct SettingsView: View {
             }
             .font(.footnote)
         }
+    }
+
+    /// Writes (or clears) the Deepgram key in the Keychain. Called on submit rather than on
+    /// every keystroke — Keychain access is comparatively expensive and per-character writes
+    /// were firing on each typed character — and again from the Test-key button so testing a
+    /// key that was typed but never explicitly submitted still exercises the current text.
+    private func persistKey() {
+        if deepgramKey.isEmpty { KeychainStore().delete("deepgramAPIKey") }
+        else { KeychainStore().set(deepgramKey, for: "deepgramAPIKey") }
     }
 
     private var aboutSection: some View {

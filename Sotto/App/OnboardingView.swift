@@ -82,7 +82,11 @@ struct OnboardingView: View {
         }
         .padding()
         .onChange(of: model.assetState) { _, state in
-            if state == .installed { completeIfConsented() }
+            // Assets are frequently pre-installed (shared across app installs on the same
+            // device), so this fires the instant the model appears no matter which page the
+            // user is actually on — without the page==4 gate it yanks them straight out of
+            // the intro cards / permissions prompt before they ever see them.
+            if state == .installed && page == 4 { completeIfConsented() }
         }
     }
 

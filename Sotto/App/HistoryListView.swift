@@ -53,30 +53,34 @@ struct HistoryListView: View {
     // Interleave gap markers between rows by time (SPEC).
     private enum Row: Identifiable {
         case segment(DaySegmentEntry)
-        case gap(DayGapEntry)
+        // Salted with its position in `index.gaps` — two gaps can share the same `from`
+        // instant (e.g. two back-to-back interruptions logged at the same timestamp), and
+        // without the salt they'd collide on id and SwiftUI would collapse/misrender them.
+        case gap(salt: Int, gap: DayGapEntry)
         var id: String {
             switch self {
             case .segment(let entry): "s-\(entry.id)"
-            case .gap(let gap): "g-\(gap.from.timeIntervalSinceReferenceDate)"
+            case .gap(let salt, let gap): "g-\(salt)-\(gap.from.timeIntervalSinceReferenceDate)"
             }
         }
         var sortDate: Date {
             switch self {
             case .segment(let entry): entry.startTime
-            case .gap(let gap): gap.from
+            case .gap(_, let gap): gap.from
             }
         }
     }
 
     private func rows(for index: DayIndex) -> [Row] {
-        (index.segments.map(Row.segment) + index.gaps.map(Row.gap))
+        let gapRows = index.gaps.enumerated().map { offset, gap in Row.gap(salt: offset, gap: gap) }
+        return (index.segments.map(Row.segment) + gapRows)
             .sorted { $0.sortDate < $1.sortDate }
     }
 
     @ViewBuilder
     private func rowView(_ row: Row) -> some View {
         switch row {
-        case .gap(let gap):
+        case .gap(_, let gap):
             Label {
                 Text("Listening stopped unexpectedly at \(gap.from, format: .dateTime.hour().minute())")
                     .font(.footnote)
