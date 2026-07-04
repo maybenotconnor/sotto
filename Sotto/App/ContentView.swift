@@ -23,6 +23,15 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Sotto")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SettingsView(model: model)
+                    } label: {
+                        Image(systemName: "gear")
+                    }
+                }
+            }
         }
         .task {
             await model.ensureSetUp()

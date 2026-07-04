@@ -24,6 +24,14 @@ final class AppModel {
         let totalMinutes: Double
     }
 
+    /// M6b Settings "Storage" section: on-disk footprint split by kind, walked live rather
+    /// than tracked incrementally (this repo's file counts are small; a full walk is cheap
+    /// and can never drift from the true on-disk state).
+    struct StorageUsage: Equatable {
+        let audioMB: Double
+        let transcriptKB: Double
+    }
+
     private(set) var pipeline: ListeningPipeline?
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
@@ -149,6 +157,54 @@ final class AppModel {
         await queue?.removeJob(m4aURL: m4aURL)
         await dayIndex?.removeSegment(m4aURL: m4aURL)
         await refreshTodaySummary()
+    }
+
+    /// M6b Settings "Storage" section: walks `segmentRoot` summing audio (.m4a/.caf) bytes
+    /// separately from transcript (.md/_day.json) bytes. Missing/unreadable file sizes count
+    /// as 0 rather than failing the whole walk.
+    func storageUsage() -> StorageUsage {
+        var audioBytes = 0
+        var transcriptBytes = 0
+        if let enumerator = FileManager.default.enumerator(
+            at: segmentRoot, includingPropertiesForKeys: [.fileSizeKey]) {
+            for case let url as URL in enumerator {
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                switch url.pathExtension {
+                case "m4a", "caf": audioBytes += size
+                case "md", "json": transcriptBytes += size
+                default: break
+                }
+            }
+        }
+        return StorageUsage(
+            audioMB: Double(audioBytes) / 1_048_576,
+            transcriptKB: Double(transcriptBytes) / 1024)
+    }
+
+    /// M6b Settings "Test key": exercises the candidate Deepgram key against a real ~1 s
+    /// sample (0.5 s of silence, encoded exactly like a real segment) rather than trusting
+    /// key *format* — the only way to know a BYOK key actually works is to use it. Real
+    /// network call: user-initiated only (the Settings "Test key" button), never invoked
+    /// from setup or from tests.
+    func testDeepgramKey(_ key: String) async -> Bool {
+        let tmp = FileManager.default.temporaryDirectory
+        let cafURL = tmp.appendingPathComponent("\(UUID().uuidString).caf")
+        let m4aURL = tmp.appendingPathComponent("\(UUID().uuidString).m4a")
+        defer {
+            try? FileManager.default.removeItem(at: cafURL)
+            try? FileManager.default.removeItem(at: m4aURL)
+        }
+        do {
+            let writer = try CAFSegmentWriter(cafURL: cafURL, m4aURL: m4aURL)
+            // 0.5 s of silence @ VADConstants.sampleRate (8000 samples at 16 kHz).
+            try writer.append([Float](repeating: 0, count: Int(0.5 * Double(VADConstants.sampleRate))))
+            writer.close()
+            try CAFSegmentWriter.transcodeToM4A(caf: cafURL, m4a: m4aURL)
+            _ = try await DeepgramService(apiKeyProvider: { key }).transcribe(file: m4aURL)
+            return true
+        } catch {
+            return false
+        }
     }
 
     func toggleFromIntent() async {
