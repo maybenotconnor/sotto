@@ -101,8 +101,7 @@ final class ListeningPipeline {
         pumpTask = nil
         let snapshot = await recorder.finishAndFinalize()
         apply(snapshot)
-        status = .idle
-        heartbeat?.record(.idle)
+        status = .idle   // defensive; apply() above already set + heartbeat-recorded idle
         eventLog.append("Stopped")
         isTransitioning = false
         resumeQueuedStops()

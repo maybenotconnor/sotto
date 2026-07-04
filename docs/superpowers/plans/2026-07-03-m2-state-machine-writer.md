@@ -942,7 +942,7 @@ actor RecorderStateMachine: SegmentRecording {
         lastSpeechEndSampleCount = writer.writtenSampleCount
         finalizeSegment()
         openSegment()
-        if writer != nil {
+        if self.writer != nil {   // NOT the guard-let shadow above — that would be dead code
             state = resumeState == .silence ? .silence : .recording
         }
     }
@@ -1338,8 +1338,7 @@ final class ListeningPipeline {
         pumpTask = nil
         let snapshot = await recorder.finishAndFinalize()
         apply(snapshot)
-        status = .idle
-        heartbeat?.record(.idle)
+        status = .idle   // defensive; apply() above already set + heartbeat-recorded idle
         eventLog.append("Stopped")
         isTransitioning = false
         resumeQueuedStops()
