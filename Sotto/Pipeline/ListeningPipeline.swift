@@ -1,13 +1,12 @@
 import Foundation
 import Observation
 
-/// M1 glue: pumps AudioChunks from the source through the pre-roll buffer and VAD,
-/// and publishes status for SwiftUI. M2 replaces `Status` with the five-state
-/// RecorderStateMachine; the wiring pattern here carries over.
-///
-/// Transitions are mutually exclusive: a `stop()` arriving while a `start()` is in
-/// flight is queued and honored the moment that start completes; a `start()` arriving
-/// during any in-flight transition is a no-op.
+/// MainActor facade over the audio pipeline: owns source start/stop transitions and
+/// forwards every chunk to the RecorderStateMachine actor, publishing its snapshots.
+/// Transitions are mutually exclusive: at most one start()/stop() crosses an await at a
+/// time. A stop() arriving during an in-flight transition suspends until the pipeline is
+/// actually idle (so stop()'s return always implies idle+drained+finalized); a start()
+/// arriving during any in-flight transition is a no-op.
 @MainActor
 @Observable
 final class ListeningPipeline {
@@ -15,27 +14,29 @@ final class ListeningPipeline {
         case idle
         case starting
         case listening
-        case speechActive
+        case recording
+        case silence
     }
 
     private(set) var status: Status = .idle
     private(set) var eventLog: [String] = []
+    private(set) var finalizedCount = 0
 
     private let source: any AudioSource
-    private let detector: any SpeechDetecting
-    private var preRoll: PreRollBuffer
+    private let recorder: any SegmentRecording
+    private let heartbeat: HeartbeatStore?
     private var pumpTask: Task<Void, Never>?
-    // Transitions are mutually exclusive: at most one start()/stop() crosses an await at a
-    // time. A stop() arriving during an in-flight transition suspends until the pipeline is
-    // actually idle (so stop()'s return always implies idle+drained); a start() arriving
-    // during any in-flight transition is a no-op.
     private var isTransitioning = false
     private var queuedStops: [CheckedContinuation<Void, Never>] = []
 
-    init(source: any AudioSource, detector: any SpeechDetecting, preRollSamples: Int = 16_000) {
+    init(
+        source: any AudioSource,
+        recorder: any SegmentRecording,
+        heartbeat: HeartbeatStore? = nil
+    ) {
         self.source = source
-        self.detector = detector
-        self.preRoll = PreRollBuffer(capacity: preRollSamples)
+        self.recorder = recorder
+        self.heartbeat = heartbeat
     }
 
     deinit {
@@ -54,7 +55,8 @@ final class ListeningPipeline {
         status = .starting   // truthful: no audio flows until source.start() succeeds
         do {
             let stream = try await source.start()
-            status = .listening
+            let snapshot = await recorder.beginListening()
+            apply(snapshot)
             eventLog.append("Listening…")
             pumpTask = Task { [weak self] in
                 for await chunk in stream {
@@ -67,18 +69,19 @@ final class ListeningPipeline {
         }
         isTransitioning = false
         if !queuedStops.isEmpty {
-            if status == .listening {
-                await performStop()      // drains, idles, then resumes the waiters
+            if status != .idle {
+                await performStop()      // drains, finalizes, idles, then resumes the waiters
             } else {
                 resumeQueuedStops()      // start failed: already idle, nothing to stop
             }
         }
     }
 
+    /// When a transition is in flight, stop() queues and SUSPENDS until the deferred stop
+    /// completes — stop()'s return always implies the pipeline is idle, drained, and any
+    /// open segment finalized.
     func stop() async {
         if isTransitioning {
-            // Suspend until the in-flight transition's deferred stop completes: callers
-            // may assume the pipeline is idle and drained when stop() returns.
             await withCheckedContinuation { queuedStops.append($0) }
             return
         }
@@ -86,14 +89,20 @@ final class ListeningPipeline {
         await performStop()
     }
 
+    /// Test hook: waits for the pump task to finish draining a closed stream.
+    func waitUntilDrained() async {
+        await pumpTask?.value
+    }
+
     private func performStop() async {
         isTransitioning = true
         await source.stop()          // finish the stream: no new chunks after this
         await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
-        await detector.reset()
-        preRoll.removeAll()
+        let snapshot = await recorder.finishAndFinalize()
+        apply(snapshot)
         status = .idle
+        heartbeat?.record(.idle)
         eventLog.append("Stopped")
         isTransitioning = false
         resumeQueuedStops()
@@ -107,29 +116,26 @@ final class ListeningPipeline {
         }
     }
 
-    /// Test hook: waits for the pump task to finish draining a closed stream.
-    func waitUntilDrained() async {
-        await pumpTask?.value
-    }
-
-    func preRollSnapshot() -> [Float] {
-        preRoll.snapshot()
-    }
-
     private func handle(_ chunk: AudioChunk) async {
-        preRoll.append(chunk.samples)
-        do {
-            guard let event = try await detector.process(chunk) else { return }
-            switch event {
-            case .speechStart:
-                status = .speechActive
-                eventLog.append("Speech started")
-            case .speechEnd:
-                status = .listening
-                eventLog.append("Speech ended")
-            }
-        } catch {
-            eventLog.append("VAD error: \(error)")
+        let snapshot = await recorder.process(chunk)
+        apply(snapshot)
+    }
+
+    private func apply(_ snapshot: RecorderSnapshot) {
+        let newStatus: Status
+        switch snapshot.state {
+        case .idle, .interrupted: newStatus = .idle
+        case .listening: newStatus = .listening
+        case .recording: newStatus = .recording
+        case .silence: newStatus = .silence
+        }
+        if status != newStatus {
+            status = newStatus
+            heartbeat?.record(snapshot.state)
+        }
+        finalizedCount = snapshot.finalizedCount
+        if let event = snapshot.lastEvent, event != eventLog.last {
+            eventLog.append(event)
         }
     }
 }

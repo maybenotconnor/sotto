@@ -130,3 +130,44 @@ final class FakeWriterFactory: SegmentWriterFactory, @unchecked Sendable {
         return writer
     }
 }
+
+/// Scriptable recorder seam for pipeline tests: returns a scripted state per chunk index
+/// and tracks ordering invariants (no chunk may be processed after finishAndFinalize).
+actor FakeRecorder: SegmentRecording {
+    private let stateScript: [Int: RecorderState]
+    private var index = 0
+    private var finished = false
+    private(set) var processedChunks = 0
+    private(set) var processedAfterFinish = 0
+    private(set) var finishCount = 0
+    private(set) var beginCount = 0
+
+    init(stateScript: [Int: RecorderState] = [:]) {
+        self.stateScript = stateScript
+    }
+
+    func beginListening() -> RecorderSnapshot {
+        beginCount += 1
+        finished = false
+        index = 0
+        return RecorderSnapshot(state: .listening, finalizedCount: 0, lastEvent: nil)
+    }
+
+    func process(_ chunk: AudioChunk) -> RecorderSnapshot {
+        processedChunks += 1
+        if finished { processedAfterFinish += 1 }
+        defer { index += 1 }
+        let state = stateScript[index] ?? .listening
+        return RecorderSnapshot(state: state, finalizedCount: 0, lastEvent: nil)
+    }
+
+    func finishAndFinalize() -> RecorderSnapshot {
+        finished = true
+        finishCount += 1
+        return RecorderSnapshot(state: .idle, finalizedCount: 0, lastEvent: nil)
+    }
+
+    func markInterrupted() -> RecorderSnapshot {
+        RecorderSnapshot(state: .interrupted, finalizedCount: 0, lastEvent: nil)
+    }
+}
