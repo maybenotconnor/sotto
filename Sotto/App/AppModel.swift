@@ -17,16 +17,29 @@ final class AppModel {
         case failed(String)
     }
 
+    /// SPEC Main screen "today summary": conversation count + total minutes for the
+    /// current local day.
+    struct TodaySummary: Equatable {
+        let count: Int
+        let totalMinutes: Double
+    }
+
     private(set) var pipeline: ListeningPipeline?
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
     private(set) var queue: TranscriptionQueue?
     private(set) var dayIndex: DayIndexStore?
     private(set) var assetState: AssetState = .unknown
+    private(set) var todaySummary: TodaySummary?
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
     private let installer: any SpeechAssetInstalling
+    // Default mirrors SegmentStore's own default root; overwritten with the real
+    // `store.rootDirectory` during performSetUp once `store` exists.
+    private var segmentRoot: URL = FileManager.default.urls(
+        for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Sotto", isDirectory: true)
 
     init(assetInstaller: (any SpeechAssetInstalling)? = nil) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
@@ -60,6 +73,25 @@ final class AppModel {
         }
     }
 
+    /// SPEC Main screen "today summary": re-derived from `_day.json` for the current local
+    /// day whenever the pipeline finalizes a new segment (Main screen calls this via
+    /// `.task(id: pipeline.finalizedCount)`).
+    func refreshTodaySummary() async {
+        guard let dayIndex else { return }
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let dayDirectory = segmentRoot.appendingPathComponent(dayFormatter.string(from: Date()))
+        guard let index = await dayIndex.index(forDay: dayDirectory), !index.segments.isEmpty else {
+            todaySummary = nil
+            return
+        }
+        todaySummary = TodaySummary(
+            count: index.segments.count,
+            totalMinutes: index.segments.reduce(0) { $0 + $1.duration } / 60)
+    }
+
     func toggleFromIntent() async {
         await ensureSetUp()
         await pipeline?.toggleFromIntent()
@@ -86,6 +118,7 @@ final class AppModel {
         }
 
         let store = SegmentStore()
+        self.segmentRoot = store.rootDirectory
         let dayIndexStore = DayIndexStore()
         self.dayIndex = dayIndexStore
         let heartbeat = HeartbeatStore()
