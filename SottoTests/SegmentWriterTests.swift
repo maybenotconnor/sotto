@@ -51,7 +51,10 @@ struct SegmentWriterTests {
         do {
             let writer = try CAFSegmentWriter(cafURL: caf, m4aURL: m4a)
             try writer.append(sineChunk(seconds: 0.8))
-            // Simulate a crash: writer dropped without finalize() or discard().
+            // Simulate a crash: writer dropped without finalize() or discard(). This proves
+            // recovery from a writer released without finalize (ARC dealloc flushes); it does
+            // not simulate a true process kill (jetsam/power loss). For that case, CAF's
+            // self-describing format plus already-flushed writes are the design basis.
         }
         try CAFSegmentWriter.transcodeToM4A(caf: caf, m4a: m4a)
         let file = try AVAudioFile(forReading: m4a)

@@ -11,6 +11,25 @@ struct SegmentPaths: Sendable, Equatable {
 struct SegmentStore: Sendable {
     let rootDirectory: URL
 
+    // Pinned per QA1480: unpinned formatters follow the device's calendar/locale, which can
+    // produce Buddhist-era years or non-ASCII digits in what must be a literal ASCII layout.
+    // TimeZone stays LOCAL on purpose — the spec files segments under the local date.
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH-mm-ss"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        return formatter
+    }()
+
     init(rootDirectory: URL? = nil) {
         self.rootDirectory = rootDirectory
             ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -18,16 +37,11 @@ struct SegmentStore: Sendable {
     }
 
     func pathsForSegment(startingAt date: Date) throws -> SegmentPaths {
-        let dayFormatter = DateFormatter()
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH-mm-ss"
-
         let dayDirectory = rootDirectory.appendingPathComponent(
-            dayFormatter.string(from: date), isDirectory: true)
+            Self.dayFormatter.string(from: date), isDirectory: true)
         try FileManager.default.createDirectory(at: dayDirectory, withIntermediateDirectories: true)
 
-        let base = timeFormatter.string(from: date)
+        let base = Self.timeFormatter.string(from: date)
         var name = base
         var suffix = 2
         while FileManager.default.fileExists(
