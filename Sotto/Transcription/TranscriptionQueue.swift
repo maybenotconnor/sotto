@@ -92,6 +92,19 @@ actor TranscriptionQueue {
     @discardableResult
     func enqueueSalvaged(m4aURL: URL) -> TranscriptionJob? {
         guard !jobs.contains(where: { $0.m4aURL == m4aURL }) else { return nil }
+        let (startDate, duration) = Self.parseStoreLayoutMetadata(m4aURL: m4aURL)
+        let job = TranscriptionJob(
+            id: UUID(), cafURL: nil, m4aURL: m4aURL, startDate: startDate,
+            duration: duration, speechDuration: duration, attempts: 0, state: .pending)
+        jobs.append(job)
+        persist()
+        return job
+    }
+
+    /// Store-layout fallback shared by `enqueueSalvaged` and `retranscribe`: parses
+    /// `<yyyy-MM-dd>/<HH-mm-ss>.m4a` into a start date and reads the audio's own duration —
+    /// used whenever no prior job exists to carry those fields forward from.
+    private static func parseStoreLayoutMetadata(m4aURL: URL) -> (startDate: Date, duration: TimeInterval) {
         let day = m4aURL.deletingLastPathComponent().lastPathComponent
         let time = m4aURL.deletingPathExtension().lastPathComponent
         let formatter = DateFormatter()
@@ -102,12 +115,7 @@ actor TranscriptionQueue {
         let duration: TimeInterval = (try? AVAudioFile(forReading: m4aURL)).map {
             Double($0.length) / $0.processingFormat.sampleRate
         } ?? 0
-        let job = TranscriptionJob(
-            id: UUID(), cafURL: nil, m4aURL: m4aURL, startDate: startDate,
-            duration: duration, speechDuration: duration, attempts: 0, state: .pending)
-        jobs.append(job)
-        persist()
-        return job
+        return (startDate, duration)
     }
 
     /// Failed-row retry (SPEC detail/list views): resets a `.failed` job to `.pending` with
@@ -119,6 +127,51 @@ actor TranscriptionQueue {
         jobs[index].attempts = 0
         persist()
         await drain()
+    }
+
+    /// Row-level retry keyed by URL (List/Detail views track segments by m4a, not job IDs) —
+    /// finds the matching `.failed` job (if any) and delegates to `retry(jobID:)`.
+    func retry(m4aURL: URL) async {
+        guard let job = jobs.first(where: { $0.m4aURL == m4aURL && $0.state == .failed }) else { return }
+        await retry(jobID: job.id)
+    }
+
+    /// SPEC Detail view "Re-transcribe with current backend": ANY existing job for this URL
+    /// (done, failed, or pending) is REPLACED — not appended alongside — with a fresh
+    /// `.pending` job, then drained immediately. `cafURL` is nil (by the time a segment has a
+    /// job at all, its CAF is long gone); `startDate`/`duration`/`speechDuration` carry over
+    /// from the old job when one existed, else fall back to parsing the store layout exactly
+    /// like `enqueueSalvaged` does.
+    func retranscribe(m4aURL: URL) async {
+        let old = jobs.first(where: { $0.m4aURL == m4aURL })
+        jobs.removeAll { $0.m4aURL == m4aURL }
+
+        let startDate: Date
+        let duration: TimeInterval
+        let speechDuration: TimeInterval
+        if let old {
+            startDate = old.startDate
+            duration = old.duration
+            speechDuration = old.speechDuration
+        } else {
+            let parsed = Self.parseStoreLayoutMetadata(m4aURL: m4aURL)
+            startDate = parsed.startDate
+            duration = parsed.duration
+            speechDuration = parsed.duration
+        }
+
+        jobs.append(TranscriptionJob(
+            id: UUID(), cafURL: nil, m4aURL: m4aURL, startDate: startDate,
+            duration: duration, speechDuration: speechDuration, attempts: 0, state: .pending))
+        persist()
+        await drain()
+    }
+
+    /// Segment deletion (List swipe-delete / Detail delete): drops any job for this URL
+    /// outright — the audio is gone, so no drain follows.
+    func removeJob(m4aURL: URL) {
+        jobs.removeAll { $0.m4aURL == m4aURL }
+        persist()
     }
 
     private enum StepOutcome {

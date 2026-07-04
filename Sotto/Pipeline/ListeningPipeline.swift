@@ -32,6 +32,12 @@ final class ListeningPipeline {
     private(set) var finalizedCount = 0
     /// Non-nil only while status == .interrupted.
     private(set) var haltReason: HaltReason?
+    /// Mirrors the recorder's disk-guard flag (M6b Main screen banner) — set from `apply()`.
+    private(set) var diskGuardActive = false
+    /// When the current session began (SPEC Main screen elapsed-time display). Set once on a
+    /// successful `start()`; survives interruption/resume (the session hasn't ended, just
+    /// paused) and only clears back to nil when the session actually stops.
+    private(set) var sessionStartedAt: Date?
 
     private let source: any AudioSource
     private let recorder: any SegmentRecording
@@ -84,6 +90,7 @@ final class ListeningPipeline {
                 }
             }
             await notifications?.requestAuthorizationIfNeeded()
+            sessionStartedAt = Date()
             liveActivity?.sessionStarted(at: Date())
         } catch {
             status = .idle
@@ -213,6 +220,7 @@ final class ListeningPipeline {
             apply(snapshot)
             status = .idle   // defensive; apply() already set + heartbeat-recorded idle
             haltReason = nil
+            sessionStartedAt = nil
             log("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
@@ -280,6 +288,7 @@ final class ListeningPipeline {
                 isPaused: status == .interrupted)
         }
         finalizedCount = snapshot.finalizedCount
+        diskGuardActive = snapshot.diskGuardActive
         if let event = snapshot.lastEvent {
             log(event)
         }

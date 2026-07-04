@@ -262,6 +262,12 @@ struct EnvironmentallyBlockedTranscriptionService: TranscriptionService {
     }
 }
 
+/// Fixed-answer stand-in for `WiFiMonitor` (AppModel's `networkMonitor` seam) — avoids
+/// depending on the test host's actual network state.
+struct FakeNetworkMonitor: NetworkMonitoring {
+    var isOnWiFi: Bool
+}
+
 actor FakeAssetInstaller: SpeechAssetInstalling {
     var installed: Bool
     var installError: Error?

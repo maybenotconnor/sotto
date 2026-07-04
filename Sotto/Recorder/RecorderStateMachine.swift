@@ -18,6 +18,7 @@ actor RecorderStateMachine: SegmentRecording {
     private var samplesSinceLastSpeech = 0
     private var finalizedCount = 0
     private var lastEvent: String?
+    private var diskGuardActive = false
     private var segmentHandler: (@Sendable (FinalizedSegment) -> Void)?
 
     init(
@@ -43,6 +44,7 @@ actor RecorderStateMachine: SegmentRecording {
     func beginListening() -> RecorderSnapshot {
         state = .listening
         lastEvent = nil
+        diskGuardActive = false
         return snapshot()
     }
 
@@ -135,6 +137,7 @@ actor RecorderStateMachine: SegmentRecording {
     private func openSegment() {
         guard store.freeDiskBytes() >= config.minFreeDiskBytes else {
             lastEvent = "Low disk space — not recording"
+            diskGuardActive = true
             return
         }
         let startDate = Date()
@@ -149,6 +152,7 @@ actor RecorderStateMachine: SegmentRecording {
             try newWriter.append(flush)
             state = .recording
             lastEvent = "Recording"
+            diskGuardActive = false
         } catch {
             writer = nil
             lastEvent = "Could not start segment: \(error)"
@@ -208,6 +212,8 @@ actor RecorderStateMachine: SegmentRecording {
     }
 
     private func snapshot() -> RecorderSnapshot {
-        RecorderSnapshot(state: state, finalizedCount: finalizedCount, lastEvent: lastEvent)
+        RecorderSnapshot(
+            state: state, finalizedCount: finalizedCount, lastEvent: lastEvent,
+            diskGuardActive: diskGuardActive)
     }
 }

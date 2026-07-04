@@ -50,6 +50,11 @@ private struct MainScreen: View {
             Text(stateLabel)
                 .font(.title.bold())
                 .foregroundStyle(stateColor)
+            if let started = pipeline.sessionStartedAt {
+                Text(started, style: .timer)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
             todaySummary
 
@@ -70,7 +75,11 @@ private struct MainScreen: View {
     @ViewBuilder
     private var banners: some View {
         if let notice = model.recoveryNotice {
-            NoticeBanner(text: notice, color: .orange)
+            VStack(spacing: 4) {
+                NoticeBanner(text: notice, color: .orange)
+                Button("Dismiss") { model.dismissRecoveryNotice() }
+                    .font(.footnote)
+            }
         }
         if case .downloading(let fraction) = model.assetState {
             VStack(spacing: 4) {
@@ -107,7 +116,7 @@ private struct MainScreen: View {
                 .font(.footnote.bold())
             }
         }
-        if let last = pipeline.eventLog.last, last.contains("Low disk space") {
+        if pipeline.diskGuardActive {
             NoticeBanner(text: "Low disk space — new recordings are paused.", color: .red)
         }
     }

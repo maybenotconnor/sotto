@@ -16,8 +16,8 @@ enum DayIndexRebuilder {
         var parsedIDs: Set<String> = []
 
         for md in mdFiles {
-            guard let text = try? String(contentsOf: md, encoding: .utf8) else { continue }
-            let front = frontmatter(of: text)
+            guard let file = TranscriptFile.parse(url: md) else { continue }
+            let front = file.frontmatter
             let id = md.deletingPathExtension().lastPathComponent
             let iso = ISO8601DateFormatter()
             let startTime = front["date"].flatMap { iso.date(from: $0) }
@@ -29,7 +29,7 @@ enum DayIndexRebuilder {
                 duration: front["duration"].flatMap(Double.init) ?? 0,
                 backend: front["backend"],
                 hasAudio: m4aFiles.contains { $0.deletingPathExtension().lastPathComponent == id },
-                wordCount: wordCount(of: text),
+                wordCount: wordCount(of: file.body),
                 transcriptionState: "done"))
         }
 
@@ -48,26 +48,13 @@ enum DayIndexRebuilder {
         return DayIndex(date: date, segments: segments, gaps: [])
     }
 
-    private static func frontmatter(of text: String) -> [String: String] {
-        let lines = text.components(separatedBy: "\n")
-        guard lines.first == "---" else { return [:] }
-        var result: [String: String] = [:]
-        for line in lines.dropFirst() {
-            if line == "---" { break }
-            guard let colon = line.firstIndex(of: ":") else { continue }
-            let key = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
-            let value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            result[key] = value
-        }
-        return result
-    }
-
-    private static func wordCount(of text: String) -> Int {
-        guard let bodyStart = text.range(of: "\n---\n") else { return 0 }
-        let body = text[bodyStart.upperBound...]
+    /// Fed `TranscriptFile.body` (frontmatter already stripped by the shared parser above) —
+    /// still strips speaker labels and heading markup, since those aren't "words".
+    private static func wordCount(of body: String) -> Int {
+        let stripped = body
             .replacingOccurrences(of: #"\*\*Speaker \d+:\*\*"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "#", with: " ")
-        return body.split { $0.isWhitespace || $0.isNewline }.count
+        return stripped.split { $0.isWhitespace || $0.isNewline }.count
     }
 
     private static func fallbackDate(dayName: String, id: String) -> Date {

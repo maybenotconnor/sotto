@@ -225,4 +225,13 @@ struct DayIndexTests {
         let entry = index.segments.first { $0.id == "11-00-00" }
         #expect(entry?.wordCount == 11)   // speaker labels excluded from the count
     }
+
+    @Test func removeSegmentDropsEntry() async throws {
+        let root = tempRoot()
+        let store = DayIndexStore(rootDirectory: root)
+        let url = m4a(root, day: "2026-03-14", name: "09-15-30")
+        await store.recordQueuedSegment(m4aURL: url, startTime: Date(), duration: 5)
+        await store.removeSegment(m4aURL: url)
+        #expect(await store.index(forDay: url.deletingLastPathComponent())?.segments.isEmpty == true)
+    }
 }

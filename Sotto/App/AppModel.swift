@@ -35,14 +35,19 @@ final class AppModel {
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
     private let installer: any SpeechAssetInstalling
+    private let networkMonitor: any NetworkMonitoring
     // Default mirrors SegmentStore's own default root; overwritten with the real
     // `store.rootDirectory` during performSetUp once `store` exists.
     private var segmentRoot: URL = FileManager.default.urls(
         for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Sotto", isDirectory: true)
 
-    init(assetInstaller: (any SpeechAssetInstalling)? = nil) {
+    init(
+        assetInstaller: (any SpeechAssetInstalling)? = nil,
+        networkMonitor: (any NetworkMonitoring)? = nil
+    ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
+        self.networkMonitor = networkMonitor ?? WiFiMonitor()
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
@@ -90,6 +95,25 @@ final class AppModel {
         todaySummary = TodaySummary(
             count: index.segments.count,
             totalMinutes: index.segments.reduce(0) { $0 + $1.duration } / 60)
+    }
+
+    /// M6b Main screen: lets the user clear the crash-recovery banner without waiting for
+    /// the next launch to age it out.
+    func dismissRecoveryNotice() {
+        recoveryNotice = nil
+    }
+
+    /// Row deletion (List swipe / Detail button). Both files are removed best-effort — a
+    /// partial state (e.g. the .m4a already gone under `deleteAfterTranscription` retention,
+    /// leaving only the .md) must not block the rest of the cleanup — then the queue/index
+    /// entries are dropped, then the summary re-derives from the now-updated index.
+    func deleteSegment(m4aURL: URL) async {
+        let mdURL = m4aURL.deletingPathExtension().appendingPathExtension("md")
+        try? FileManager.default.removeItem(at: m4aURL)
+        try? FileManager.default.removeItem(at: mdURL)
+        await queue?.removeJob(m4aURL: m4aURL)
+        await dayIndex?.removeSegment(m4aURL: m4aURL)
+        await refreshTodaySummary()
     }
 
     func toggleFromIntent() async {
@@ -181,9 +205,16 @@ final class AppModel {
             // flipped mid-session hot-swaps the backend for future segments only, without
             // reconstructing the queue (SPEC "changes affect only future segments").
             let keychain = KeychainStore()
+            // Local (not `self.networkMonitor`) for the same reason as `settings` above:
+            // keeps the MainActor-isolated `self` out of this nonisolated, @Sendable closure.
+            let monitor = networkMonitor
             let transcriptionQueue = TranscriptionQueue(serviceProvider: {
                 if settings.deepgramEnabled, keychain.get("deepgramAPIKey") != nil {
-                    return DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
+                    let deepgram = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
+                    // Wi-Fi gate (M6b): reuses the existing environmental classification
+                    // (`.unavailable` → job stays pending, drain stops) rather than adding a
+                    // new one — see NetworkMonitoring.swift.
+                    return WiFiGatedService(inner: deepgram, allowed: { !settings.wifiOnlyUpload || monitor.isOnWiFi })
                 } else {
                     return SpeechAnalyzerService()
                 }

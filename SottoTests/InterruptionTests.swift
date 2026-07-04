@@ -252,4 +252,13 @@ struct InterruptionTests {
         #expect(pipeline.haltReason == .userPause)   // not mislabeled as a call
         #expect(await notifications.scheduled == 0)  // and no spurious fallback notification
     }
+
+    @Test func sessionStartedAtTracksLifecycle() async throws {
+        let pipeline = ListeningPipeline(source: FakeAudioSource(), recorder: FakeRecorder())
+        #expect(pipeline.sessionStartedAt == nil)
+        await pipeline.start()
+        #expect(pipeline.sessionStartedAt != nil)
+        await pipeline.stop()
+        #expect(pipeline.sessionStartedAt == nil)
+    }
 }

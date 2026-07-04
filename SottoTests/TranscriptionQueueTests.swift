@@ -282,4 +282,43 @@ struct TranscriptionQueueTests {
         #expect(await queue.jobs.count == 1)
         #expect(await queue.jobs.first?.m4aURL.lastPathComponent == "old.m4a")
     }
+
+    @Test func wifiGateKeepsJobPendingWithoutBurningAttempts() async throws {
+        let dir = tempDir()
+        let gated = WiFiGatedService(
+            inner: FakeTranscriptionService(text: "x"), allowed: { false })
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"), service: gated, rootDirectory: dir)
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.drain()
+        #expect(await queue.jobs.first?.state == .pending)
+        #expect(await queue.jobs.first?.attempts == 0)
+    }
+
+    @Test func retranscribeReplacesDoneJobAndRunsAgain() async throws {
+        let dir = tempDir()
+        let service = FakeTranscriptionService(text: "v1")
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"), service: service, rootDirectory: dir)
+        let segment = try makeSegment(in: dir.appendingPathComponent("a"))
+        await queue.enqueue(segment)
+        await queue.drain()
+        #expect(await queue.jobs.first?.state == .done)
+
+        await queue.retranscribe(m4aURL: segment.m4aURL)
+        #expect(await queue.jobs.count == 1)              // replaced, not duplicated
+        #expect(await queue.jobs.first?.state == .done)   // re-ran to done
+        #expect(await service.calls == 2)
+    }
+
+    @Test func removeJobDropsIt() async throws {
+        let dir = tempDir()
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            service: EnvironmentallyBlockedTranscriptionService(), rootDirectory: dir)
+        let segment = try makeSegment(in: dir.appendingPathComponent("a"))
+        await queue.enqueue(segment)
+        await queue.removeJob(m4aURL: segment.m4aURL)
+        #expect(await queue.jobs.isEmpty)
+    }
 }

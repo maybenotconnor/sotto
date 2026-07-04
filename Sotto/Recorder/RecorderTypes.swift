@@ -14,6 +14,10 @@ struct RecorderSnapshot: Sendable, Equatable {
     var state: RecorderState
     var finalizedCount: Int
     var lastEvent: String?
+    /// M6b: mirrors the machine's disk-guard flag so the Main screen can show a persistent
+    /// "low disk space" banner instead of pattern-matching `lastEvent` strings. Defaulted so
+    /// existing `RecorderSnapshot(state:finalizedCount:lastEvent:)` call sites keep compiling.
+    var diskGuardActive: Bool = false
 }
 
 struct RecorderConfig: Sendable {

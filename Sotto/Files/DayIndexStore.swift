@@ -61,6 +61,17 @@ actor DayIndexStore {
         mutateEntry(for: m4aURL) { $0.hasAudio = false }
     }
 
+    /// Row-level deletion (List swipe-delete / Detail delete): unlike `setAudioRemoved`
+    /// (retention: keeps the transcript, just marks audio gone), this drops the entry
+    /// outright — the caller has removed both the .m4a and .md for this segment.
+    func removeSegment(m4aURL: URL) {
+        let dayDirectory = m4aURL.deletingLastPathComponent()
+        guard var index = load(dayDirectory) else { return }
+        let id = m4aURL.deletingPathExtension().lastPathComponent
+        index.segments.removeAll { $0.id == id }
+        write(index, to: dayDirectory)
+    }
+
     func recordGap(onDayOf date: Date, from: Date, reason: String) {
         let dayDirectory = rootDirectory.appendingPathComponent(
             Self.dayFormatter.string(from: date), isDirectory: true)
