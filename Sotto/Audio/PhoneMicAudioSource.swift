@@ -80,13 +80,15 @@ actor PhoneMicAudioSource: AudioSource {
     func rebuildTap() throws {
         guard let engine, let continuation else { return }
         let input = engine.inputNode
-        input.removeTap(onBus: 0)
+        // Validate + build the replacement BEFORE removing the old tap: throwing after
+        // removal would leave the engine running with no tap at all (silent capture loss).
         let hardwareFormat = input.outputFormat(forBus: 0)
         guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0,
               let converter = FormatConverter(inputFormat: hardwareFormat) else {
             throw AudioSourceError.invalidHardwareFormat
         }
         let processor = TapProcessor(converter: converter)
+        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(VADConstants.chunkSize),
                          format: hardwareFormat) { buffer, when in
             processor.handle(buffer, hostTime: when.hostTime, continuation: continuation)

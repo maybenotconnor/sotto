@@ -86,12 +86,20 @@ struct ContentView: View {
                 guard shouldResume, UIApplication.shared.applicationState == .active else { return }
                 await newPipeline?.resumeFromInterruption()
             }
-            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source] in
-                try? await source?.rebuildTap()
+            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source, weak newPipeline] in
+                do {
+                    try await source?.rebuildTap()
+                } catch {
+                    // No valid input route: park honestly instead of silently losing capture.
+                    await newPipeline?.interrupt()
+                }
             }
             sessionObserver.onMediaServicesReset = { [weak newPipeline] in
                 // Full teardown + rebuild (SPEC): park, then restart the whole stack.
                 await newPipeline?.interrupt()
+                // Backgrounded: engine.start() fails (561145187); recovery stays with the
+                // intent/notification/app-open, and interrupt() already scheduled the fallback.
+                guard UIApplication.shared.applicationState == .active else { return }
                 await newPipeline?.resumeFromInterruption()
             }
             sessionObserver.startObserving()

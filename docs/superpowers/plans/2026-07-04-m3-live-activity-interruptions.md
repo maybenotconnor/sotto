@@ -595,6 +595,18 @@ Deltas from the current file (apply all; everything else unchanged):
             eventLog.append("Paused — call")
         }
         isTransitioning = false
+        // Reconcile requests that arrived during this halt, regardless of entry point:
+        // an explicit stop always wins and must leave the pipeline idle+finalized before
+        // its waiters resume; a pending interrupt against an idle/interrupted pipeline
+        // is meaningless and must not leak into a future session. (Review-found fix:
+        // without this, a stop queued during an interrupt-halt was swallowed, and a
+        // stale pendingInterrupt could hijack the next start.)
+        if !queuedStops.isEmpty && status != .idle {
+            pendingInterrupt = false
+            await performHalt(.stop)   // bounded recursion: the inner halt ends at .idle
+            return                     // the inner call resumed the waiters
+        }
+        pendingInterrupt = false
         resumeQueuedStops()
     }
 ```
@@ -1085,13 +1097,15 @@ NOTE for the implementer: the `queue: .main` + `MainActor.assumeIsolated` patter
     func rebuildTap() throws {
         guard let engine, let continuation else { return }
         let input = engine.inputNode
-        input.removeTap(onBus: 0)
+        // Validate + build the replacement BEFORE removing the old tap: throwing after
+        // removal would leave the engine running with no tap at all (silent capture loss).
         let hardwareFormat = input.outputFormat(forBus: 0)
         guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0,
               let converter = FormatConverter(inputFormat: hardwareFormat) else {
             throw AudioSourceError.invalidHardwareFormat
         }
         let processor = TapProcessor(converter: converter)
+        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(VADConstants.chunkSize),
                          format: hardwareFormat) { buffer, when in
             processor.handle(buffer, hostTime: when.hostTime, continuation: continuation)
@@ -1121,12 +1135,20 @@ In `setUp()`, after the pipeline is constructed, add (and add `@State private va
                 guard shouldResume, UIApplication.shared.applicationState == .active else { return }
                 await newPipeline?.resumeFromInterruption()
             }
-            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source] in
-                try? await source?.rebuildTap()
+            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source, weak newPipeline] in
+                do {
+                    try await source?.rebuildTap()
+                } catch {
+                    // No valid input route: park honestly instead of silently losing capture.
+                    await newPipeline?.interrupt()
+                }
             }
             sessionObserver.onMediaServicesReset = { [weak newPipeline] in
                 // Full teardown + rebuild (SPEC): park, then restart the whole stack.
                 await newPipeline?.interrupt()
+                // Backgrounded: engine.start() fails (561145187); recovery stays with the
+                // intent/notification/app-open, and interrupt() already scheduled the fallback.
+                guard UIApplication.shared.applicationState == .active else { return }
                 await newPipeline?.resumeFromInterruption()
             }
             sessionObserver.startObserving()
