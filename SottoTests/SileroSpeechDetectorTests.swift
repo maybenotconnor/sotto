@@ -2,6 +2,32 @@ import Foundation
 import Testing
 @testable import Sotto
 
+/// A synthetic speech-like signal — a 180 Hz sawtooth carrier with harmonics, amplitude
+/// modulated at a speech-like 3–6 Hz rate, normalized to ±0.5 — proven to trigger the
+/// Silero VAD's speechStart event at threshold 0.3 (see
+/// `SileroSpeechDetectorTests.speechLikeSignalTriggersSpeechStart`). Declared at file scope
+/// (not nested in the struct) so `RecorderIntegrationTests` can call it unqualified too —
+/// the whole-stack test reuses the exact signal proven here rather than inventing a new one.
+func makeSpeechLikeSignal(seconds: Double, sampleRate: Double = 16_000) -> [Float] {
+    let carrierHz = 180.0
+    let modulationHz = 4.5
+
+    let sampleCount = Int(seconds * sampleRate)
+    var speech = [Float](repeating: 0, count: sampleCount)
+    for i in 0..<sampleCount {
+        let t = Double(i) / sampleRate
+        let phase = carrierHz * t
+        let sawtooth = 2 * (phase - (phase + 0.5).rounded(.down))
+        let harmonic2 = 0.5 * sin(2 * .pi * carrierHz * 2 * t)
+        let harmonic3 = 0.25 * sin(2 * .pi * carrierHz * 3 * t)
+        let envelope = 0.5 * (1 + sin(2 * .pi * modulationHz * t))
+        speech[i] = Float((sawtooth + harmonic2 + harmonic3) * envelope)
+    }
+    let peak = speech.map { abs($0) }.max() ?? 1
+    guard peak > 0 else { return speech }
+    return speech.map { $0 / peak * 0.5 }
+}
+
 struct SileroSpeechDetectorTests {
     private func makeDetector(threshold: Float = 0.6) throws -> SileroSpeechDetector {
         let url = try #require(Bundle.main.url(
@@ -64,31 +90,11 @@ struct SileroSpeechDetectorTests {
         #expect(sawSpeechStart)
     }
 
-    /// ~2 s of speech-like audio — a 100–300 Hz sawtooth carrier with harmonics, amplitude
-    /// modulated at a speech-like 3–6 Hz rate, normalized to ±0.5 — followed by ~2 s of silence.
+    /// ~2 s of speech-like audio (see `makeSpeechLikeSignal(seconds:)` above) followed by
+    /// ~2 s of silence.
     private static func syntheticSpeechSignal(sampleRate: Double) -> [Float] {
-        let speechDuration = 2.0
-        let silenceDuration = 2.0
-        let carrierHz = 180.0
-        let modulationHz = 4.5
-
-        let speechSampleCount = Int(speechDuration * sampleRate)
-        var speech = [Float](repeating: 0, count: speechSampleCount)
-        for i in 0..<speechSampleCount {
-            let t = Double(i) / sampleRate
-            let phase = carrierHz * t
-            let sawtooth = 2 * (phase - (phase + 0.5).rounded(.down))
-            let harmonic2 = 0.5 * sin(2 * .pi * carrierHz * 2 * t)
-            let harmonic3 = 0.25 * sin(2 * .pi * carrierHz * 3 * t)
-            let envelope = 0.5 * (1 + sin(2 * .pi * modulationHz * t))
-            speech[i] = Float((sawtooth + harmonic2 + harmonic3) * envelope)
-        }
-        let peak = speech.map { abs($0) }.max() ?? 1
-        if peak > 0 {
-            for i in 0..<speech.count { speech[i] = speech[i] / peak * 0.5 }
-        }
-
-        let silence = [Float](repeating: 0, count: Int(silenceDuration * sampleRate))
+        let speech = makeSpeechLikeSignal(seconds: 2.0, sampleRate: sampleRate)
+        let silence = [Float](repeating: 0, count: Int(2.0 * sampleRate))
         return speech + silence
     }
 
