@@ -18,11 +18,10 @@ struct FormatConverterTests {
             }
         }
 
-        // Rate converters hold back priming samples; assert over two passes. The reusable
-        // scratch buffer (min capacity 4096, vs. the ~1664 an exact-sized per-call buffer
-        // would have used) gives the resampler more destination room during warm-up, which
-        // measurably widens the priming deficit on this toolchain — 512 covers it with
-        // margin while still catching gross corruption (which would be off by thousands).
+        // Rate converters hold back priming samples; assert over two passes. The scratch
+        // buffer is sized to the exact tap-buffer need, so the resampler's priming deficit
+        // is a fixed ~262 samples on this toolchain, deterministic across runs — 512 covers
+        // it with margin while still catching gross corruption (off by thousands).
         let total = converter.convert(buffer).count + converter.convert(buffer).count
         #expect(abs(total - 3200) <= 512)
     }
@@ -50,14 +49,37 @@ struct FormatConverterTests {
             #expect(out.allSatisfy { $0.isFinite })
             total += out.count
         }
-        // 10 × 100 ms @ 16 kHz = 16,000 samples, minus resampler priming latency. That
-        // latency is measurably larger with the reusable scratch buffer's 4096-frame floor
-        // (~944 samples on this toolchain, deterministic across repeated runs and stable
-        // whether measured over 10 or 100 calls) than with an exact-sized per-call buffer,
-        // so the tolerance is wider than a naive "one buffer's worth" estimate. 1024 still
-        // catches real reuse bugs (stale frameLength/corruption), which inflate totals by
-        // many thousands, not hundreds.
-        #expect(abs(total - 16_000) <= 1024)
+        // 10 × 100 ms @ 16 kHz = 16,000 samples, minus resampler priming latency. With the
+        // scratch buffer sized to the exact tap-buffer need, that latency is a fixed ~262
+        // samples on this toolchain, deterministic across repeated runs and stable whether
+        // measured over 10 or 100 calls — a one-time priming cost, not per-call loss. 512
+        // still catches real reuse bugs (stale frameLength/corruption), which inflate
+        // totals by many thousands, not hundreds.
+        #expect(abs(total - 16_000) <= 512)
+    }
+
+    @Test func resamplerDeficitDoesNotGrowWithCallCount() throws {
+        func totalOutput(calls: Int) throws -> Int {
+            let inputFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
+            let converter = try #require(FormatConverter(inputFormat: inputFormat))
+            let frames: AVAudioFrameCount = 4800
+            let buffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frames)!
+            buffer.frameLength = frames
+            for i in 0..<Int(frames) {
+                buffer.floatChannelData![0][i] = sinf(2 * .pi * 440 * Float(i) / 48_000)
+            }
+            var total = 0
+            for _ in 0..<calls {
+                total += converter.convert(buffer).count
+            }
+            return total
+        }
+        // The resampler's holdback is one-time priming latency: the deficit measured over
+        // 100 calls must match the deficit over 10 calls, else samples are leaking per call.
+        let deficit10 = 10 * 1600 - (try totalOutput(calls: 10))
+        let deficit100 = 100 * 1600 - (try totalOutput(calls: 100))
+        #expect(abs(deficit100 - deficit10) <= 128)
     }
 
     @Test func rejectsDegenerateZeroRateFormat() {

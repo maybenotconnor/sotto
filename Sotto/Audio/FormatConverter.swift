@@ -39,9 +39,11 @@ final class FormatConverter: @unchecked Sendable {
         let needed = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
         if scratch == nil || scratch!.frameCapacity < needed {
             // Rare: first call, or a larger-than-ever tap buffer — never steady-state.
-            // Allocating per callback on the realtime audio thread risks priority
-            // inversion; reuse keeps the hot path allocation-free.
-            scratch = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: max(needed, 4096))
+            // Capacity tracks the largest tap buffer seen so far; reallocation only
+            // happens on growth, not on every call. Allocating per callback on the
+            // realtime audio thread risks priority inversion; reuse keeps the hot
+            // path allocation-free.
+            scratch = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: needed)
         }
         guard let output = scratch else {
             logger.error("Failed to allocate conversion scratch buffer (\(needed) frames)")
