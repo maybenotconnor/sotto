@@ -23,10 +23,7 @@ struct FormatConverterTests {
         #expect(abs(total - 3200) <= 256)
     }
 
-    @Test func rejectsUnconvertibleFormat() {
-        // 0-channel formats can't construct; use a nonsensical conversion instead:
-        // AVAudioConverter init returns nil only for genuinely incompatible pairs,
-        // which Float32 PCM never is — so assert the happy path constructs.
+    @Test func constructsForStandardPCMInputs() {
         let inputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 1, interleaved: false)!
         #expect(FormatConverter(inputFormat: inputFormat) != nil)

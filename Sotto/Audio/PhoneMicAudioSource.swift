@@ -10,6 +10,7 @@ actor PhoneMicAudioSource: AudioSource {
     nonisolated var isAvailable: Bool { true }
 
     enum AudioSourceError: Error {
+        case alreadyStarted
         case microphonePermissionDenied
         case converterUnavailable
     }
@@ -18,6 +19,7 @@ actor PhoneMicAudioSource: AudioSource {
     private var continuation: AsyncStream<AudioChunk>.Continuation?
 
     func start() async throws -> AsyncStream<AudioChunk> {
+        guard engine == nil else { throw AudioSourceError.alreadyStarted }
         guard await AVAudioApplication.requestRecordPermission() else {
             throw AudioSourceError.microphonePermissionDenied
         }
@@ -28,10 +30,13 @@ actor PhoneMicAudioSource: AudioSource {
         // Tap at the HARDWARE format — requesting 16 kHz here crashes with a format mismatch.
         let hardwareFormat = input.outputFormat(forBus: 0)
         guard let converter = FormatConverter(inputFormat: hardwareFormat) else {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             throw AudioSourceError.converterUnavailable
         }
 
         let processor = TapProcessor(converter: converter)
+        // Unbounded buffering is deliberate: a render tap can't take backpressure, and dropping
+        // chunks would lose audio. A stalled consumer grows ~256 KB/min — acceptable, visible.
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
 
         input.installTap(onBus: 0, bufferSize: 4096, format: hardwareFormat) { buffer, when in
@@ -44,6 +49,7 @@ actor PhoneMicAudioSource: AudioSource {
         } catch {
             input.removeTap(onBus: 0)
             continuation.finish()
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             throw error
         }
 

@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 
 /// Converts hardware-format tap buffers to the pipeline format: 16 kHz mono Float32.
 /// One instance per tap installation (AVAudioConverter carries resampler state);
@@ -11,6 +12,8 @@ import AVFoundation
 final class FormatConverter: @unchecked Sendable {
     static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+
+    private let logger = Logger(subsystem: "com.decanlys.Sotto", category: "FormatConverter")
 
     private let converter: AVAudioConverter
     private let ratio: Double
@@ -28,6 +31,7 @@ final class FormatConverter: @unchecked Sendable {
     func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
         guard let output = AVAudioPCMBuffer(pcmFormat: Self.targetFormat, frameCapacity: capacity) else {
+            logger.error("Failed to allocate output buffer (capacity: \(capacity, privacy: .public))")
             return []
         }
 
@@ -49,6 +53,7 @@ final class FormatConverter: @unchecked Sendable {
         }
 
         guard conversionError == nil, let channelData = output.floatChannelData else {
+            logger.error("Conversion failed: \(conversionError?.localizedDescription ?? "no channel data", privacy: .public)")
             return []
         }
         return Array(UnsafeBufferPointer(start: channelData[0], count: Int(output.frameLength)))

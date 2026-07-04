@@ -11,6 +11,7 @@ struct SampleChunker {
     private var pendingHostTime: UInt64 = 0
 
     init(chunkSize: Int = 4096) {
+        precondition(chunkSize > 0, "chunkSize must be positive")
         self.chunkSize = chunkSize
     }
 

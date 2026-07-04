@@ -59,6 +59,9 @@ final class ListeningPipeline {
         }
     }
 
+    /// When a transition is already in flight, `stop()` queues and returns immediately —
+    /// the pipeline is NOT yet idle when it returns in that case. The drain happens later,
+    /// when the in-flight `start()` honors the queued stop. (M2 will revisit these semantics.)
     func stop() async {
         if isTransitioning {
             stopRequestedDuringTransition = true

@@ -10,6 +10,7 @@ struct PreRollBuffer {
     private var storage: [Float] = []
 
     init(capacity: Int) {
+        precondition(capacity > 0, "capacity must be positive")
         self.capacity = capacity
     }
 
