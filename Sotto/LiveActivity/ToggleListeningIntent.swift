@@ -7,9 +7,17 @@ import Foundation
 @MainActor
 final class IntentHandlers {
     static let shared = IntentHandlers()
+    private weak var owner: AnyObject?
+    private(set) var toggle: (() async -> Void)?
 
-    /// Registered by AppModel at construction; awaited by ToggleListeningIntent.perform().
-    var toggle: (() async -> Void)?
+    /// First live owner wins; a deallocated owner's slot is reclaimable. Prevents a
+    /// transient model (tests, previews, App-struct re-init) from silently disconnecting
+    /// the real one (review finding).
+    func register(owner: AnyObject, toggle: @escaping () async -> Void) {
+        if let existing = self.owner, existing !== owner { return }
+        self.owner = owner
+        self.toggle = toggle
+    }
 }
 
 /// AudioRecordingIntent (iOS 18+) is Apple's sanctioned mechanism for starting/stopping

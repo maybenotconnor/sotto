@@ -255,6 +255,13 @@ actor FakeTranscriptionService: TranscriptionService {
     }
 }
 
+struct EnvironmentallyBlockedTranscriptionService: TranscriptionService {
+    let backend = TranscriptionBackend.speechAnalyzer
+    func transcribe(file: URL) async throws -> TranscriptionResult {
+        throw TranscriptionError.unavailable
+    }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0

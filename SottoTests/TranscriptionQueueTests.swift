@@ -115,4 +115,57 @@ struct TranscriptionQueueTests {
         await queue.drain()
         #expect(await queue.jobs.first?.state == .failed)
     }
+
+    @Test func environmentalFailureLeavesJobPendingWithoutBurningAttempts() async throws {
+        let dir = tempDir()
+        let segment = try makeSegment(in: dir)
+        let store = dir.appendingPathComponent("jobs.json")
+        let queue = TranscriptionQueue(
+            storeURL: store, service: EnvironmentallyBlockedTranscriptionService())
+        await queue.enqueue(segment)
+        await queue.drain()
+        #expect(await queue.jobs.first?.state == .pending)   // NOT failed
+        #expect(await queue.jobs.first?.attempts == 0)       // no attempts burned
+
+        // Conditions improve (new launch, assets installed): a fresh queue on the SAME
+        // store with a working service completes the job — recoverability proven.
+        let recovered = TranscriptionQueue(storeURL: store, service: FakeTranscriptionService(text: "later"))
+        await recovered.drain()
+        #expect(await recovered.jobs.first?.state == .done)
+    }
+
+    @Test func environmentalBlockStopsDrainWithoutTouchingLaterJobs() async throws {
+        let dir = tempDir()
+        let store = dir.appendingPathComponent("jobs.json")
+        let queue = TranscriptionQueue(
+            storeURL: store, service: EnvironmentallyBlockedTranscriptionService())
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("a")))
+        await queue.enqueue(try makeSegment(in: dir.appendingPathComponent("b")))
+        await queue.drain()
+        #expect(await queue.pendingCount == 2)               // neither burned
+    }
+
+    @Test func enqueueSalvagedParsesStoreLayoutAndTranscribes() async throws {
+        let dir = tempDir()
+        let day = dir.appendingPathComponent("2026-03-14")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let caf = day.appendingPathComponent("t.caf"); let m4a = day.appendingPathComponent("09-15-30.m4a")
+        let writer = try CAFSegmentWriter(cafURL: caf, m4aURL: m4a)
+        try writer.append((0..<VADConstants.sampleRate).map { _ in Float(0.1) })
+        writer.close()
+        try CAFSegmentWriter.transcodeToM4A(caf: caf, m4a: m4a)
+        try FileManager.default.removeItem(at: caf)
+
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"),
+            service: FakeTranscriptionService(text: "salvage transcript"))
+        await queue.enqueueSalvaged(m4aURL: m4a)
+        await queue.enqueueSalvaged(m4aURL: m4a)     // duplicate ignored
+        #expect(await queue.jobs.count == 1)
+        let job = await queue.jobs[0]
+        #expect(Calendar(identifier: .gregorian).component(.hour, from: job.startDate) == 9)
+        #expect(job.duration > 0.5)
+        await queue.drain()
+        #expect(await queue.jobs.first?.state == .done)
+    }
 }

@@ -13,13 +13,13 @@ final class AppModel {
     private(set) var setupError: String?
     private(set) var recoveryNotice: String?
     private(set) var queue: TranscriptionQueue?
-    private var setUpStarted = false
+    private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
 
     init() {
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
-        IntentHandlers.shared.toggle = { [weak self] in
+        IntentHandlers.shared.register(owner: self) { [weak self] in
             await self?.toggleFromIntent()
         }
     }
@@ -29,10 +29,18 @@ final class AppModel {
         await pipeline?.toggleFromIntent()
     }
 
-    @MainActor
+    /// A Live Activity toggle that arrives mid-setup AWAITS the same in-flight setup
+    /// instead of no-opping against a nil pipeline (review finding) — the shared `Task`
+    /// makes every caller (this one and any concurrent one) observe the same completion.
     func ensureSetUp() async {
-        guard !setUpStarted else { return }
-        setUpStarted = true
+        if setupTask == nil {
+            setupTask = Task { await performSetUp() }
+        }
+        await setupTask?.value
+    }
+
+    @MainActor
+    private func performSetUp() async {
         guard let modelURL = Bundle.main.url(
             forResource: SileroSpeechDetector.modelResourceName,
             withExtension: "mlmodelc")
@@ -85,6 +93,14 @@ final class AppModel {
             }
             let transcriptionQueue = TranscriptionQueue(service: service)
             self.queue = transcriptionQueue
+
+            // Fix 3: salvaged audio must be transcribed, not just recovered. Enqueued
+            // BEFORE the gated drain decision below — on an asset-less device these jobs
+            // wait as `.pending` just like any other (Fix 1 keeps that safe).
+            for url in salvaged {
+                await transcriptionQueue.enqueueSalvaged(m4aURL: url)
+            }
+
             await recorder.setSegmentHandler { segment in
                 Task {
                     await transcriptionQueue.enqueue(segment)
