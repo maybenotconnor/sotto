@@ -133,15 +133,30 @@ struct SegmentRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(entry.startTime, format: .dateTime.hour().minute())
-                    .font(.headline)
-                Text("· \(Int(entry.duration / 60)) min")
+            if let title = entry.title {
+                HStack {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: entry.backend == "deepgram" ? "cloud" : "iphone")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                Text("\(entry.startTime, format: .dateTime.hour().minute()) · \(Int(entry.duration / 60)) min")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Image(systemName: entry.backend == "deepgram" ? "cloud" : "iphone")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
+            } else {
+                HStack {
+                    Text(entry.startTime, format: .dateTime.hour().minute())
+                        .font(.headline)
+                    Text("· \(Int(entry.duration / 60)) min")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: entry.backend == "deepgram" ? "cloud" : "iphone")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
             }
             switch entry.transcriptionState {
             case "queued":

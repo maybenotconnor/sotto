@@ -25,7 +25,7 @@ struct ConversationDetailView: View {
             }
             .padding()
         }
-        .navigationTitle(entry.startTime.formatted(.dateTime.hour().minute()))
+        .navigationTitle(entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
         .toolbar { toolbarContent }
         .task {
             transcript = TranscriptFile.parse(url: mdURL)
@@ -91,9 +91,19 @@ struct ConversationDetailView: View {
             }
         default:
             if let transcript {
-                // Deepgram speaker turns arrive as markdown bold; render as styled text.
-                Text(LocalizedStringKey(transcript.body))
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 16) {
+                    if let summary = transcript.summary {
+                        GroupBox("Summary") {
+                            Text(summary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    // Deepgram speaker turns arrive as markdown bold; render as styled text.
+                    // `transcriptBody` (never the raw `body`) so the `## Summary`/`## Transcript`
+                    // section markers (M8 meeting notes) never appear as literal text.
+                    Text(LocalizedStringKey(transcript.transcriptBody))
+                        .textSelection(.enabled)
+                }
             } else {
                 Text("Transcript unavailable.").foregroundStyle(.secondary)
             }

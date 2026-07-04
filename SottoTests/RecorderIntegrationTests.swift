@@ -25,7 +25,8 @@ struct RecorderIntegrationTests {
         let received = Mutex<[FinalizedSegment]>([])
         let service = FakeTranscriptionService(text: "integration transcript")
         let queue = TranscriptionQueue(
-            storeURL: root.appendingPathComponent("jobs.json"), service: service, rootDirectory: root)
+            storeURL: root.appendingPathComponent("jobs.json"), service: service, rootDirectory: root,
+            postProcessorProvider: { FakePostProcessor() })
         let dayIndex = DayIndexStore(rootDirectory: root)
         await machine.setSegmentHandler { segment in
             received.withLock { $0.append(segment) }
@@ -49,7 +50,8 @@ struct RecorderIntegrationTests {
                     m4aURL: transition.job.m4aURL,
                     transcriptionState: transition.job.state.rawValue,
                     backend: transition.result?.backend.rawValue,
-                    wordCount: wordCount)
+                    wordCount: wordCount,
+                    title: transition.notes?.title)
                 if transition.job.state == .done,
                    RetentionEnforcer.applyAfterTranscription(
                        m4aURL: transition.job.m4aURL, retention: .deleteAfterTranscription) {
@@ -103,6 +105,7 @@ struct RecorderIntegrationTests {
         let md = segment.m4aURL.deletingPathExtension().appendingPathExtension("md")
         let transcript = try String(contentsOf: md, encoding: .utf8)
         #expect(transcript.contains("integration transcript"))
+        #expect(transcript.contains("title: Fake standup"))
 
         // The transition handler's retention step (mirroring AppModel) runs from its own
         // fire-and-forget Task off the synchronous transitionHandler callback — poll the day
@@ -119,6 +122,7 @@ struct RecorderIntegrationTests {
             atPath: dayDirectory.appendingPathComponent("_day.json").path))
         #expect(entry?.transcriptionState == "done")
         #expect((entry?.wordCount ?? 0) > 0)
+        #expect(entry?.title == "Fake standup")
         #expect(entry?.hasAudio == false)                     // default retention deleted the audio
         #expect(!FileManager.default.fileExists(atPath: segment.m4aURL.path))   // audio gone
         #expect(FileManager.default.fileExists(atPath: md.path))                // transcript kept
