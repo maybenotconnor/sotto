@@ -179,4 +179,24 @@ struct InterruptionTests {
         await pipeline.resumeFromInterruption()
         #expect(await notifications.cancelled == 1)
     }
+
+    @Test func interruptDuringResumeIsHonoredEvenAfterChunkAdvancesStatus() async throws {
+        let source = FakeAudioSource()
+        let recorder = FakeRecorder(stateScript: [0: .recording])   // first chunk → .recording
+        let notifications = GatedNotificationScheduler()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: nil, notifications: notifications)
+
+        await pipeline.start()
+        await pipeline.interrupt()
+        async let resuming: Void = pipeline.resumeFromInterruption()
+        await notifications.waitUntilCancelRequested()      // resume is suspended mid-transition
+        await source.emitSilentChunks(count: 1)
+        for _ in 0..<10 { await Task.yield() }              // let the pump advance status to .recording
+        await pipeline.interrupt()                          // must PEND (isTransitioning true)
+        await notifications.releaseCancel()
+        await resuming
+
+        #expect(pipeline.status == .interrupted)            // pended interrupt honored, not dropped
+    }
 }

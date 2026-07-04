@@ -207,10 +207,38 @@ actor FakeNotificationScheduler: NotificationScheduling {
     func cancelPausedNotification() { cancelled += 1 }
 }
 
+/// NotificationScheduling whose cancel suspends until released — for ordering races.
+actor GatedNotificationScheduler: NotificationScheduling {
+    private var cancelGate: CheckedContinuation<Void, Never>?
+    private var cancelRequested: CheckedContinuation<Void, Never>?
+    private var cancelWasRequested = false
+
+    func requestAuthorizationIfNeeded() {}
+    func schedulePausedNotification() {}
+
+    func cancelPausedNotification() async {
+        cancelWasRequested = true
+        cancelRequested?.resume()
+        cancelRequested = nil
+        await withCheckedContinuation { cancelGate = $0 }
+    }
+
+    func waitUntilCancelRequested() async {
+        if cancelWasRequested { return }
+        await withCheckedContinuation { cancelRequested = $0 }
+    }
+
+    func releaseCancel() {
+        cancelGate?.resume()
+        cancelGate = nil
+    }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0
     private(set) var endedCount = 0
+    private(set) var endAllStaleCount = 0
     private(set) var updates: [(label: String, count: Int, paused: Bool)] = []
 
     func sessionStarted(at date: Date) { startedCount += 1 }
@@ -218,4 +246,5 @@ final class FakeLiveActivityController: LiveActivityControlling {
         updates.append((stateLabel, conversationCount, isPaused))
     }
     func sessionEnded() { endedCount += 1 }
+    func endAllStale() { endAllStaleCount += 1 }
 }

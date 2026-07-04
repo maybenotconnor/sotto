@@ -51,6 +51,8 @@ final class ListeningPipeline {
         // Belt-and-braces: if an owner drops the pipeline without stop(), stop the source
         // so the stream finishes and the (weak-self) pump exits — otherwise the live audio
         // stack (engine, tap, VAD) would keep running with no reachable owner.
+        // The Live Activity is NOT ended here (MainActor-isolated controller is unreachable
+        // from deinit); the launch-time endAllStale() sweep covers it.
         let source = self.source
         Task.detached {
             await source.stop()
@@ -155,7 +157,10 @@ final class ListeningPipeline {
             }
         } else if pendingInterrupt {
             pendingInterrupt = false
-            if status == .listening {
+            // .recording/.silence count too: a chunk processed during resume's own awaits can
+            // advance status past .listening, and dropping the interrupt then leaves a
+            // live-looking UI over a dead engine. Only idle/interrupted make it moot.
+            if status != .idle && status != .interrupted {
                 await performHalt(.interrupt)
             }
         }
@@ -234,6 +239,13 @@ final class ListeningPipeline {
                 stateLabel: Self.activityLabel(for: newStatus),
                 conversationCount: snapshot.finalizedCount,
                 isPaused: newStatus == .interrupted)
+        } else if finalizedCount != snapshot.finalizedCount {
+            // Status-unchanged path: the branch above already pushed the fresh count when
+            // status ALSO changed, so this only fires standalone — no double update.
+            liveActivity?.update(
+                stateLabel: Self.activityLabel(for: status),
+                conversationCount: snapshot.finalizedCount,
+                isPaused: status == .interrupted)
         }
         finalizedCount = snapshot.finalizedCount
         if let event = snapshot.lastEvent, event != eventLog.last {

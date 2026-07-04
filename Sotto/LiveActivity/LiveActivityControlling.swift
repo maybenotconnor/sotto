@@ -1,3 +1,4 @@
+// Activity<T> is not Sendable in this SDK; values cross MainActor→nonisolated update/end calls.
 @preconcurrency import ActivityKit
 import Foundation
 
@@ -8,13 +9,23 @@ protocol LiveActivityControlling: AnyObject {
     func sessionStarted(at date: Date)
     func update(stateLabel: String, conversationCount: Int, isPaused: Bool)
     func sessionEnded()
+    /// End every leftover activity from a previous process (iOS keeps them up to 8 h after
+    /// a kill). Call at launch and defensively before requesting a fresh one.
+    func endAllStale()
 }
 
 @MainActor
 final class SottoLiveActivityController: LiveActivityControlling {
     private var activity: Activity<SottoActivityAttributes>?
 
+    func endAllStale() {
+        for stale in Activity<SottoActivityAttributes>.activities {
+            Task { await stale.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
     func sessionStarted(at date: Date) {
+        endAllStale()
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let content = ActivityContent(
             state: SottoActivityAttributes.ContentState(

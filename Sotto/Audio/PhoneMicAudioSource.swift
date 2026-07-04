@@ -93,6 +93,12 @@ actor PhoneMicAudioSource: AudioSource {
                          format: hardwareFormat) { buffer, when in
             processor.handle(buffer, hostTime: when.hostTime, continuation: continuation)
         }
+        // A route change usually auto-pauses the engine; a tap on a stopped engine captures
+        // nothing, silently. Restart it.
+        if !engine.isRunning {
+            engine.prepare()
+            try engine.start()
+        }
     }
 
     /// `.playAndRecord` + `.mixWithOthers` so activating the session never pauses the

@@ -51,6 +51,11 @@ struct ContentView: View {
         // can exist — it transcodes every .caf under the root.
         let salvaged = await Task.detached { OrphanSalvager.salvage(store: store) }.value
 
+        // Constructed early so leftover activities from a previous process (iOS keeps them
+        // up to 8 h after a kill) are ended right away, before anything else stands up.
+        let liveActivity = SottoLiveActivityController()
+        liveActivity.endAllStale()
+
         // The banner stays gated on the heartbeat (a crash), not on salvage results alone.
         if heartbeat.indicatesUncleanShutdown {
             recoveryNotice = salvaged.isEmpty
@@ -72,7 +77,7 @@ struct ContentView: View {
             let source = PhoneMicAudioSource()
             let newPipeline = ListeningPipeline(
                 source: source, recorder: recorder, heartbeat: heartbeat,
-                liveActivity: SottoLiveActivityController(),
+                liveActivity: liveActivity,
                 notifications: UserNotificationScheduler())
             pipeline = newPipeline
 

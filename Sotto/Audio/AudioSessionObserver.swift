@@ -21,6 +21,7 @@ struct UIKitBackgroundTasks: BackgroundTasking {
     }
 
     func end(_ identifier: Int) {
+        guard identifier != UIBackgroundTaskIdentifier.invalid.rawValue else { return }
         MainActor.assumeIsolated {
             UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: identifier))
         }
@@ -49,6 +50,7 @@ final class AudioSessionObserver {
     }
 
     func startObserving(session: AVAudioSession = .sharedInstance()) {
+        guard tokens.isEmpty else { return }
         tokens.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: session, queue: .main
         ) { [weak self] notification in
@@ -65,6 +67,9 @@ final class AudioSessionObserver {
                 guard let self else { return }
                 switch type {
                 case .began:
+                    // No expirationHandler: handler work must stay far under the ~30 s budget —
+                    // enforced by M4's queue design (transcode moved off this path; see M3
+                    // review Critical #1).
                     let taskID = self.backgroundTasks.begin()
                     let handler = self.onInterruptionBegan
                     let tasks = self.backgroundTasks
