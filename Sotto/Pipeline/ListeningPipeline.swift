@@ -185,6 +185,16 @@ final class ListeningPipeline {
             eventLog.append("Paused — call")
         }
         isTransitioning = false
+        // Reconcile requests that arrived during this halt, regardless of entry point:
+        // an explicit stop always wins and must leave the pipeline idle+finalized before
+        // its waiters resume; a pending interrupt against an idle/interrupted pipeline
+        // is meaningless and must not leak into a future session.
+        if !queuedStops.isEmpty && status != .idle {
+            pendingInterrupt = false
+            await performHalt(.stop)   // bounded recursion: the inner halt ends at .idle
+            return                     // the inner call resumed the waiters
+        }
+        pendingInterrupt = false
         resumeQueuedStops()
     }
 

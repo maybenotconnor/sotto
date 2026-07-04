@@ -123,4 +123,43 @@ struct InterruptionTests {
         await pipeline.toggleFromIntent()                      // active → stop
         #expect(pipeline.status == .idle)
     }
+
+    @Test func stopQueuedDuringInterruptHaltStillFullyStops() async throws {
+        let source = FakeAudioSource()
+        let recorder = FakeRecorder()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: activity)
+
+        await pipeline.start()
+        // Race an interrupt-halt against a stop. If the stop queues mid-halt (the bug's
+        // window), it must still leave the pipeline idle+finalized when it returns; if it
+        // happens to win the race outright, the interrupt no-ops from idle — either
+        // ordering must satisfy the assertions.
+        async let interrupting: Void = pipeline.interrupt()
+        async let stopping: Void = pipeline.stop()
+        _ = await (interrupting, stopping)
+
+        #expect(pipeline.status == .idle)
+        #expect(await recorder.finishCount == 1)
+        #expect(activity.endedCount == 1)
+    }
+
+    @Test func interruptPendedDuringStopHaltDoesNotHijackNextStart() async throws {
+        let source = FakeAudioSource()
+        let recorder = FakeRecorder()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: recorder, liveActivity: nil)
+
+        await pipeline.start()
+        async let stopping: Void = pipeline.stop()
+        async let interrupting: Void = pipeline.interrupt()   // pends mid-halt, or no-ops from idle
+        _ = await (stopping, interrupting)
+        #expect(pipeline.status == .idle)
+
+        await pipeline.start()                                // a fresh, unrelated session
+        #expect(pipeline.status == .listening)                // must NOT be hijacked to .interrupted
+        #expect(await recorder.markInterruptedCount == 0)
+        await pipeline.stop()
+    }
 }
