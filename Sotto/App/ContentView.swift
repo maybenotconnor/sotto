@@ -122,15 +122,19 @@ private struct MainScreen: View {
     }
 
     private var todaySummary: some View {
-        Group {
-            if let summary = model.todaySummary {
-                Text("\(summary.count) conversations · \(Int(summary.totalMinutes)) min")
-            } else {
-                Text("No conversations yet today")
+        NavigationLink {
+            HistoryListView(model: model)
+        } label: {
+            Group {
+                if let summary = model.todaySummary {
+                    Text("\(summary.count) conversations · \(Int(summary.totalMinutes)) min")
+                } else {
+                    Text("No conversations yet today")
+                }
             }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
         .task(id: pipeline.finalizedCount) {
             await model.refreshTodaySummary()
         }

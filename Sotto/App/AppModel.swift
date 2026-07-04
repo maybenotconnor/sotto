@@ -42,6 +42,17 @@ final class AppModel {
         for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Sotto", isDirectory: true)
 
+    /// Pinned "yyyy-MM-dd" formatter (POSIX locale, Gregorian calendar) shared by
+    /// `refreshTodaySummary` and `dayDirectory(for:)` — folder names must not drift with the
+    /// user's locale/calendar settings (SPEC "File output" store layout).
+    private static let dayFolderFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     init(
         assetInstaller: (any SpeechAssetInstalling)? = nil,
         networkMonitor: (any NetworkMonitoring)? = nil
@@ -83,12 +94,8 @@ final class AppModel {
     /// `.task(id: pipeline.finalizedCount)`).
     func refreshTodaySummary() async {
         guard let dayIndex else { return }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dayFormatter.calendar = Calendar(identifier: .gregorian)
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-        let dayDirectory = segmentRoot.appendingPathComponent(dayFormatter.string(from: Date()))
-        guard let index = await dayIndex.index(forDay: dayDirectory), !index.segments.isEmpty else {
+        let dir = dayDirectory(for: Date())
+        guard let index = await dayIndex.index(forDay: dir), !index.segments.isEmpty else {
             todaySummary = nil
             return
         }
@@ -101,6 +108,28 @@ final class AppModel {
     /// the next launch to age it out.
     func dismissRecoveryNotice() {
         recoveryNotice = nil
+    }
+
+    /// SPEC "File output" store layout: the folder a given local day's segments live under.
+    func dayDirectory(for date: Date) -> URL {
+        segmentRoot.appendingPathComponent(Self.dayFolderFormatter.string(from: date))
+    }
+
+    /// History List's day navigator: loads `_day.json` for `date`, rebuilding-and-persisting
+    /// it from the folder's `.md` frontmatter when the file is missing/corrupt but the day
+    /// folder itself exists (SPEC: the index is rebuildable). A day with no folder at all
+    /// (never recorded) returns nil rather than fabricating an empty index.
+    func loadDayIndex(for date: Date) async -> DayIndex? {
+        guard let dayIndex else { return nil }
+        let dir = dayDirectory(for: date)
+        if let existing = await dayIndex.index(forDay: dir) { return existing }
+        guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
+        return await dayIndex.rebuildAndPersist(dayDirectory: dir)
+    }
+
+    /// Failed-row retry (List/Detail "Transcription failed — retry").
+    func retryTranscription(m4aURL: URL) async {
+        if let queue { await queue.retry(m4aURL: m4aURL) }
     }
 
     /// Row deletion (List swipe / Detail button). Both files are removed best-effort — a
