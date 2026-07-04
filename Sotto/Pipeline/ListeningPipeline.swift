@@ -27,6 +27,7 @@ final class ListeningPipeline {
     private let recorder: any SegmentRecording
     private let heartbeat: HeartbeatStore?
     private let liveActivity: (any LiveActivityControlling)?
+    private let notifications: (any NotificationScheduling)?
     private var pumpTask: Task<Void, Never>?
     private var isTransitioning = false
     private var queuedStops: [CheckedContinuation<Void, Never>] = []
@@ -36,12 +37,14 @@ final class ListeningPipeline {
         source: any AudioSource,
         recorder: any SegmentRecording,
         heartbeat: HeartbeatStore? = nil,
-        liveActivity: (any LiveActivityControlling)? = nil
+        liveActivity: (any LiveActivityControlling)? = nil,
+        notifications: (any NotificationScheduling)? = nil
     ) {
         self.source = source
         self.recorder = recorder
         self.heartbeat = heartbeat
         self.liveActivity = liveActivity
+        self.notifications = notifications
     }
 
     deinit {
@@ -68,6 +71,7 @@ final class ListeningPipeline {
                     await self?.handle(chunk)
                 }
             }
+            await notifications?.requestAuthorizationIfNeeded()
             liveActivity?.sessionStarted(at: Date())
         } catch {
             status = .idle
@@ -136,6 +140,7 @@ final class ListeningPipeline {
                     await self?.handle(chunk)
                 }
             }
+            await notifications?.cancelPausedNotification()
         } catch {
             status = .interrupted
             eventLog.append("Resume failed: \(error)")
@@ -179,10 +184,12 @@ final class ListeningPipeline {
             status = .idle   // defensive; apply() already set + heartbeat-recorded idle
             eventLog.append("Stopped")
             liveActivity?.sessionEnded()
+            await notifications?.cancelPausedNotification()
         case .interrupt:
             let snapshot = await recorder.markInterrupted()
             apply(snapshot)
             eventLog.append("Paused — call")
+            await notifications?.schedulePausedNotification()
         }
         isTransitioning = false
         // Reconcile requests that arrived during this halt, regardless of entry point:

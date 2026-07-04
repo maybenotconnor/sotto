@@ -198,6 +198,15 @@ actor FakeRecorder: SegmentRecording {
     }
 }
 
+actor FakeNotificationScheduler: NotificationScheduling {
+    private(set) var authorizationRequests = 0
+    private(set) var scheduled = 0
+    private(set) var cancelled = 0
+    func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
+    func schedulePausedNotification() { scheduled += 1 }
+    func cancelPausedNotification() { cancelled += 1 }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0

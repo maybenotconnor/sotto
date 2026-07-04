@@ -164,4 +164,19 @@ struct InterruptionTests {
         // property above still holds; the counter would make this test order-fragile.
         await pipeline.stop()
     }
+
+    @Test func interruptSchedulesFallbackNotificationAndResumeCancelsIt() async throws {
+        let source = FakeAudioSource()
+        let notifications = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(),
+            liveActivity: nil, notifications: notifications)
+
+        await pipeline.start()
+        #expect(await notifications.authorizationRequests == 1)
+        await pipeline.interrupt()
+        #expect(await notifications.scheduled == 1)            // scheduled on .began, per spec
+        await pipeline.resumeFromInterruption()
+        #expect(await notifications.cancelled == 1)
+    }
 }
