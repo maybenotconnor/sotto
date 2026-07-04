@@ -93,6 +93,13 @@ final class CAFSegmentWriter: SegmentWriting {
         try? FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: m4a.path)
+
+        // SPEC backup policy: audio is bulky and the transcript is the product — exclude
+        // every produced m4a from iCloud/device backup (transcripts + _day.json stay in).
+        var backupValues = URLResourceValues()
+        backupValues.isExcludedFromBackup = true
+        var mutableM4A = m4a
+        try? mutableM4A.setResourceValues(backupValues)
     }
 }
 
