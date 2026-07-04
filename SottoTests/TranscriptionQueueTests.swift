@@ -238,7 +238,7 @@ struct TranscriptionQueueTests {
 
         let retried = await queue.jobs.first
         #expect(retried?.state == .done)   // retry re-drained and succeeded
-        #expect(retried?.attempts == 0 || retried?.state == .done)
+        #expect(await queue.pendingCount == 0)
     }
 
     @Test func serviceProviderIsEvaluatedPerJob() async throws {

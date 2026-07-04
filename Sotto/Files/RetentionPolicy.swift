@@ -33,34 +33,45 @@ struct SettingsStore: Sendable {
 /// changes apply on the NEXT Start/launch — SPEC "changes affect only future segments", not
 /// a listening session already in progress.
 extension SettingsStore {
+    /// Clamped at this getter choke point: corrupted/edited UserDefaults values (e.g. via
+    /// the Simulator's `defaults write` or a synced-but-stale plist) must never reach
+    /// RecorderStateMachine's preconditions — that would crash-loop before any UI can recover.
     var vadThreshold: Float {
         get {
-            defaults.object(forKey: "vadThreshold") == nil
-                ? 0.6 : defaults.float(forKey: "vadThreshold")
+            guard defaults.object(forKey: "vadThreshold") != nil else { return 0.6 }
+            let value = defaults.float(forKey: "vadThreshold")
+            guard value.isFinite else { return 0.6 }
+            return min(max(value, 0.1), 0.9)
         }
         nonmutating set { defaults.set(newValue, forKey: "vadThreshold") }
     }
 
     var silenceTimeout: TimeInterval {
         get {
-            defaults.object(forKey: "silenceTimeout") == nil
-                ? 45 : defaults.double(forKey: "silenceTimeout")
+            guard defaults.object(forKey: "silenceTimeout") != nil else { return 45 }
+            let value = defaults.double(forKey: "silenceTimeout")
+            guard value.isFinite else { return 45 }
+            return min(max(value, 15), 120)
         }
         nonmutating set { defaults.set(newValue, forKey: "silenceTimeout") }
     }
 
     var minSegmentSpeech: TimeInterval {
         get {
-            defaults.object(forKey: "minSegmentSpeech") == nil
-                ? 3 : defaults.double(forKey: "minSegmentSpeech")
+            guard defaults.object(forKey: "minSegmentSpeech") != nil else { return 3 }
+            let value = defaults.double(forKey: "minSegmentSpeech")
+            guard value.isFinite else { return 3 }
+            return min(max(value, 1), 10)
         }
         nonmutating set { defaults.set(newValue, forKey: "minSegmentSpeech") }
     }
 
     var preRollSeconds: TimeInterval {
         get {
-            defaults.object(forKey: "preRollSeconds") == nil
-                ? 1.0 : defaults.double(forKey: "preRollSeconds")
+            guard defaults.object(forKey: "preRollSeconds") != nil else { return 1.0 }
+            let value = defaults.double(forKey: "preRollSeconds")
+            guard value.isFinite else { return 1.0 }
+            return min(max(value, 0.5), 3.0)
         }
         nonmutating set { defaults.set(newValue, forKey: "preRollSeconds") }
     }

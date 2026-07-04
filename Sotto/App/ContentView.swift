@@ -6,6 +6,7 @@ import UIKit
 struct ContentView: View {
     let model: AppModel
     @State private var micDenied = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -26,6 +27,11 @@ struct ContentView: View {
         .task {
             await model.ensureSetUp()
             micDenied = AVAudioApplication.shared.recordPermission == .denied
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            micDenied = AVAudioApplication.shared.recordPermission == .denied
+            Task { await model.refreshTodaySummary() }
         }
     }
 }
@@ -69,7 +75,7 @@ private struct MainScreen: View {
         if case .downloading(let fraction) = model.assetState {
             VStack(spacing: 4) {
                 ProgressView(value: fraction)
-                Text("Preparing on-device transcription…")
+                Text("Preparing on-device transcription — recordings are saved and will be transcribed when it's ready.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -81,13 +87,12 @@ private struct MainScreen: View {
                 Label("Download transcription model", systemImage: "arrow.down.circle")
                     .font(.footnote)
             }
-        } else if case .failed(let message) = model.assetState {
+        } else if case .failed = model.assetState {
             VStack(spacing: 4) {
                 NoticeBanner(text: "Model download failed — check your connection.", color: .red)
                 Button("Try again") { Task { await model.downloadSpeechModel() } }
                     .font(.footnote)
             }
-            .accessibilityHint(Text(message))
         }
         if micDenied {
             VStack(spacing: 6) {
@@ -140,7 +145,7 @@ private struct MainScreen: View {
         .buttonStyle(.borderedProminent)
         .tint(isActive ? .red : .accentColor)
         .padding(.horizontal, 40)
-        .disabled(micDenied && pipeline.status == .idle)
+        .disabled(micDenied && (pipeline.status == .idle || pipeline.status == .interrupted))
     }
 
     private var buttonLabel: String {

@@ -66,6 +66,19 @@ struct RetentionTests {
         #expect(RetentionEnforcer.sweep(root: root, retention: .deleteAfterTranscription).isEmpty)
     }
 
+    @Test func corruptedSettingsClampToSpecRanges() {
+        let suite = UserDefaults(suiteName: "settings-clamp-\(UUID().uuidString)")!
+        let settings = SettingsStore(defaults: suite)
+        suite.set(Float.nan, forKey: "vadThreshold")
+        suite.set(-5.0, forKey: "silenceTimeout")
+        suite.set(9_999.0, forKey: "preRollSeconds")
+        suite.set(0.0, forKey: "minSegmentSpeech")
+        #expect(settings.vadThreshold == 0.6)
+        #expect(settings.silenceTimeout == 15)
+        #expect(settings.preRollSeconds == 3.0)
+        #expect(settings.minSegmentSpeech == 1)
+    }
+
     @Test func transcodedM4AIsExcludedFromBackup() throws {
         let root = tempRoot()
         let caf = root.appendingPathComponent("a.caf")

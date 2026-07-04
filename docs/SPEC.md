@@ -470,7 +470,7 @@ Design language: stock SwiftUI, system colors/typography (supports the "transpar
 
 - **Purpose:** one glance = current state; one tap = start/stop.
 - **Layout:** large state dial/indicator (Idle / Listening / Recording / Paused — call / Paused) with subtle animation while listening; primary Start/Stop button; today's summary line ("6 conversations · 47 min"); tap summary → List view. Battery-impact hint shown while active.
-- **States:** _Idle_ (Start prominent); _active_ (Stop + state label + elapsed); _mic permission denied_ (inline explainer + "Open Settings" deep link — Start disabled); _model downloading_ (progress inline, Start disabled with copy "Preparing on-device transcription…"); _disk guard tripped_ (warning banner); _post-crash_ (one-line gap banner, dismissible).
+- **States:** _Idle_ (Start prominent); _active_ (Stop + state label + elapsed); _mic permission denied_ (inline explainer + "Open Settings" deep link — Start disabled); _model downloading_ (progress inline; Start stays ENABLED — recordings queue safely and are transcribed once the model is ready. Copy: "Preparing on-device transcription — recordings are saved and will be transcribed when it's ready." Amended 2026-07-04 per M6a review adjudication.); _disk guard tripped_ (warning banner); _post-crash_ (one-line gap banner, dismissible).
 - **Edge:** Stop while Recording/Silence → finalize current segment first, then Idle (show brief "Saving…" state).
 
 ### 2. List view (Today / history)
