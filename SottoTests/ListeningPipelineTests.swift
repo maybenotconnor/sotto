@@ -97,4 +97,23 @@ struct ListeningPipelineTests {
         for _ in 0..<10 { await Task.yield() }
         #expect(pipeline.preRollSnapshot().isEmpty)   // no live pump is consuming chunks
     }
+
+    @Test func startStopStartBurstEndsIdleWithoutOrphanedPump() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let firstStart: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.stop()                              // queued: start is mid-flight
+        async let secondStart: Void = pipeline.start()     // must no-op: a transition is in flight
+        for _ in 0..<5 { await Task.yield() }              // let secondStart hit the guard while the gate is closed
+        await source.releaseStart()
+        _ = await (firstStart, secondStart)
+
+        #expect(pipeline.status == .idle)                  // the queued stop won after the start completed
+        await source.emitSilentChunks(count: 2)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(pipeline.preRollSnapshot().isEmpty)        // no orphaned pump is consuming chunks
+    }
 }
