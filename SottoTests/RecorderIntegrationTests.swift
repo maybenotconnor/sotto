@@ -25,7 +25,7 @@ struct RecorderIntegrationTests {
         let received = Mutex<[FinalizedSegment]>([])
         let service = FakeTranscriptionService(text: "integration transcript")
         let queue = TranscriptionQueue(
-            storeURL: root.appendingPathComponent("jobs.json"), service: service)
+            storeURL: root.appendingPathComponent("jobs.json"), service: service, rootDirectory: root)
         await machine.setSegmentHandler { segment in
             received.withLock { $0.append(segment) }
             // Mirrors AppModel's wiring: enqueue + drain into the real queue rather than

@@ -2,6 +2,15 @@ import AVFoundation
 import Foundation
 import os
 
+/// The result of one job's terminal transition, delivered synchronously (no suspension) so
+/// the queue's actor isolation is never re-entered mid-notification. Fired only when a job
+/// reaches `.done` (with its `result`) or `.failed` (nil) — never for `.blocked` outcomes or
+/// still-pending retries (M5: consumed by retention + the day index).
+struct JobTransition: Sendable {
+    let job: TranscriptionJob            // state already updated (done/failed)
+    let result: TranscriptionResult?     // non-nil on done
+}
+
 /// SPEC "Transcription layer": persisted queue, never inline. Serial worker; drains
 /// whenever the app runs; leftovers drain on next launch/foreground. Also the new home of
 /// the CAF→m4a transcode (M3 review Critical #1 — moved OFF the interruption window).
@@ -9,13 +18,21 @@ actor TranscriptionQueue {
     private let storeURL: URL
     private let service: any TranscriptionService
     private let maxAttempts: Int
+    private let rootDirectory: URL
     private(set) var jobs: [TranscriptionJob] = []
     private var draining = false
+    private var transitionHandler: (@Sendable (JobTransition) -> Void)?
     private let logger = Logger(subsystem: "com.decanlys.Sotto", category: "TranscriptionQueue")
 
     var pendingCount: Int { jobs.filter { $0.state == .pending }.count }
 
-    init(storeURL: URL? = nil, service: any TranscriptionService, maxAttempts: Int = 3) {
+    /// `rootDirectory` relativizes persisted `caf`/`m4a` paths (M4 carryover — a container
+    /// move, e.g. an iOS-managed app-data migration, invalidates absolute paths). Defaults
+    /// to the Documents directory, the SPEC "File output" root everything else lives under.
+    init(
+        storeURL: URL? = nil, service: any TranscriptionService, maxAttempts: Int = 3,
+        rootDirectory: URL? = nil
+    ) {
         if let storeURL {
             self.storeURL = storeURL
         } else {
@@ -26,10 +43,20 @@ actor TranscriptionQueue {
         }
         self.service = service
         self.maxAttempts = maxAttempts
-        if let data = try? Data(contentsOf: self.storeURL),
-           let loaded = try? JSONDecoder().decode([TranscriptionJob].self, from: data) {
-            jobs = loaded
+        let resolvedRoot = rootDirectory
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.rootDirectory = resolvedRoot
+        if let data = try? Data(contentsOf: self.storeURL) {
+            if let persisted = try? JSONDecoder().decode([PersistedJob].self, from: data) {
+                jobs = persisted.map { $0.job(root: resolvedRoot) }
+            } else if let loaded = try? JSONDecoder().decode([TranscriptionJob].self, from: data) {
+                jobs = loaded   // safety-net fallback; PersistedJob already tolerates v1 shape
+            }
         }
+    }
+
+    func setTransitionHandler(_ handler: @escaping @Sendable (JobTransition) -> Void) {
+        transitionHandler = handler
     }
 
     func enqueue(_ segment: FinalizedSegment) {
@@ -120,6 +147,7 @@ actor TranscriptionQueue {
             } else {
                 jobs[index].state = .failed
                 persist()
+                transitionHandler?(JobTransition(job: jobs[index], result: nil))
                 return .progressed
             }
             persist()
@@ -136,6 +164,7 @@ actor TranscriptionQueue {
             }
             _ = try TranscriptMarkdownWriter.write(result: result, job: jobs[doneIndex])
             jobs[doneIndex].state = .done
+            transitionHandler?(JobTransition(job: jobs[doneIndex], result: result))
         } catch {
             if isEnvironmental(error) {
                 return .blocked   // stays .pending, attempts untouched; a later drain retries
@@ -149,20 +178,108 @@ actor TranscriptionQueue {
         return .progressed
     }
 
+    /// Burns one attempt; only marks `.failed` — and only fires the transition handler —
+    /// once `maxAttempts` is reached. A retry that stays `.pending` is not a transition.
     private func fail(_ index: Int) {
         jobs[index].attempts += 1
-        if jobs[index].attempts >= maxAttempts {
+        let reachedThreshold = jobs[index].attempts >= maxAttempts
+        if reachedThreshold {
             jobs[index].state = .failed
         }
         persist()
+        if reachedThreshold {
+            transitionHandler?(JobTransition(job: jobs[index], result: nil))
+        }
     }
 
     private func persist() {
         do {
-            let data = try JSONEncoder().encode(jobs)
+            let data = try JSONEncoder().encode(jobs.map { PersistedJob(job: $0, root: rootDirectory) })
             try data.write(to: storeURL, options: .atomic)
         } catch {
             logger.error("Failed to persist transcription queue: \(error.localizedDescription)")
+        }
+    }
+
+    /// Persistence format v2: paths are relative to `rootDirectory` when the job's files live
+    /// under it (the common case), else stored absolute (M5 — a container move, e.g. an
+    /// iOS-managed app-data migration, must not orphan in-flight jobs). Tolerates the v1
+    /// format — `TranscriptionJob`'s own Codable conformance, i.e. absolute `cafURL`/`m4aURL`
+    /// `URL` fields — written by builds before this change, by custom-decoding both shapes.
+    private struct PersistedJob: Codable {
+        let id: UUID
+        let cafPath: String?
+        let m4aPath: String
+        let startDate: Date
+        let duration: TimeInterval
+        let speechDuration: TimeInterval
+        let attempts: Int
+        let state: TranscriptionJob.State
+
+        enum CodingKeys: String, CodingKey {
+            case id, cafPath, m4aPath, startDate, duration, speechDuration, attempts, state
+            case cafURL, m4aURL
+        }
+
+        init(job: TranscriptionJob, root: URL) {
+            id = job.id
+            cafPath = job.cafURL.map { Self.relativize($0, root: root) }
+            m4aPath = Self.relativize(job.m4aURL, root: root)
+            startDate = job.startDate
+            duration = job.duration
+            speechDuration = job.speechDuration
+            attempts = job.attempts
+            state = job.state
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            startDate = try container.decode(Date.self, forKey: .startDate)
+            duration = try container.decode(TimeInterval.self, forKey: .duration)
+            speechDuration = try container.decode(TimeInterval.self, forKey: .speechDuration)
+            attempts = try container.decode(Int.self, forKey: .attempts)
+            state = try container.decode(TranscriptionJob.State.self, forKey: .state)
+            if let path = try container.decodeIfPresent(String.self, forKey: .m4aPath) {
+                m4aPath = path
+                cafPath = try container.decodeIfPresent(String.self, forKey: .cafPath)
+            } else {
+                // v1: absolute URL-encoded fields (no cafPath/m4aPath keys present at all).
+                let m4a = try container.decode(URL.self, forKey: .m4aURL)
+                m4aPath = m4a.path
+                cafPath = try container.decodeIfPresent(URL.self, forKey: .cafURL)?.path
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encodeIfPresent(cafPath, forKey: .cafPath)
+            try container.encode(m4aPath, forKey: .m4aPath)
+            try container.encode(startDate, forKey: .startDate)
+            try container.encode(duration, forKey: .duration)
+            try container.encode(speechDuration, forKey: .speechDuration)
+            try container.encode(attempts, forKey: .attempts)
+            try container.encode(state, forKey: .state)
+        }
+
+        static func relativize(_ url: URL, root: URL) -> String {
+            let path = url.standardizedFileURL.path
+            let rootPath = root.standardizedFileURL.path
+            return path.hasPrefix(rootPath + "/")
+                ? String(path.dropFirst(rootPath.count + 1))
+                : path
+        }
+
+        func job(root: URL) -> TranscriptionJob {
+            func resolve(_ path: String) -> URL {
+                path.hasPrefix("/") ? URL(fileURLWithPath: path)
+                    : root.appendingPathComponent(path)
+            }
+            return TranscriptionJob(
+                id: id, cafURL: cafPath.map(resolve), m4aURL: resolve(m4aPath),
+                startDate: startDate, duration: duration, speechDuration: speechDuration,
+                attempts: attempts, state: state)
         }
     }
 }
