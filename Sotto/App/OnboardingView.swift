@@ -13,8 +13,8 @@ struct OnboardingView: View {
         TabView(selection: $page) {
             card(
                 icon: "waveform.circle.fill", tint: .green,
-                title: "Listens all day, records only speech",
-                body: "Sotto keeps the mic open but writes audio only while people are talking. Everything stays on your phone.",
+                title: "Your notetaker that starts itself",
+                body: "Sotto notices when a conversation starts and takes notes automatically — no record button to remember. Recording and transcription stay on your phone.",
                 button: "Continue") { page = 1 }
                 .tag(0)
             card(

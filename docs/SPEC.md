@@ -265,7 +265,7 @@ struct PostProcessingResult: Codable, Sendable {
 }
 ```
 
-Not implemented in MVP. This is where Foundation Models summarization/action-items plug in. Roadmap note: FluidAudio also ships local diarization (Pyannote/Sortformer) and ASR (Parakeet) — a future path to **on-device diarization**, which would remove the only reason Deepgram exists in this app.
+Not implemented in MVP. This is where Foundation Models summarization/action-items plug in. Roadmap note: FluidAudio also ships local diarization (Pyannote/Sortformer) and ASR (Parakeet) — a future path to **on-device diarization**, which would remove the only reason Deepgram exists in this app. _(M8, 2026-07-04: implemented via Foundation Models — `PostProcessingResult` gained `title: String?`; generation is best-effort and never fails a transcription job.)_
 
 ---
 
@@ -411,6 +411,8 @@ Reading the table: if the pipeline lands near the 0.35 W budget, the Air comfort
 
 Target: App Store distribution. **Honest risk framing:** guideline 2.5.4 permits background modes "only … for their intended purposes: VoIP, audio playback, location, task completion, local notifications, etc." — background _recording_ rides on the OS entitlement's documented behavior, not an explicit guideline blessing, and a 16-h/day mostly-silent session invites an "intended purpose" question. There is **no known approved all-day phone-mic ambient recorder**: Bee (Amazon), Limitless (Meta), Plaud, and Omi all record on wearables or Apple Watch; Otter and Just Press Record are user-initiated sessions with background continuation. That makes this app a test case — hence milestone M7.
 
+> [!NOTE] **Positioning (adopted 2026-07-04): "AI notetaker that starts itself — auto-detects your meetings."** The observed app behavior is a user-initiated session with background continuation (the already-approved Otter/Just Press Record pattern); "all-day" is a user choice, not app behavior. Store metadata, review notes, and onboarding copy use the meeting-notetaker frame. Marketing must never say "records everything all day."
+
 **Review preparation:**
 
 - Development is deliberately local-first: dev builds and TestFlight **internal** testing involve no Apple review at all, so the full app can be built and lived-with before Apple ever sees it. The first contact is M7 — a minimal-footprint submission (or TestFlight **external** / Beta App Review) once the core loop is proven and before launch spend.
@@ -497,7 +499,7 @@ Design language: stock SwiftUI, system colors/typography (supports the "transpar
 
 ### 5. Onboarding (first launch, 4 cards + 2 system prompts)
 
-1. _What it does_ — listens all day, records only speech, everything stays on your phone.
+1. _What it does_ — listens all day, records only speech, everything stays on your phone. _(copy updated 2026-07-04 to the meeting-notetaker frame: "Your notetaker that starts itself.")_
 2. _What you'll see_ — orange mic indicator + Live Activity are always visible while listening; ~~battery expectation ("roughly comparable to music playback; heavy days may need a top-up")~~ _(removed 2026-07-04, product decision: don't surface battery in UI)_.
 3. _Your responsibility_ — one-party vs all-party consent in plain words; CT phone-call rule handled automatically (calls stop recording); "laws differ by state" + link. Require an explicit "I understand" tap.
 4. _Permissions_ — mic prompt (`AVAudioApplication.requestRecordPermission`), then notification prompt (or `.provisional` silently — dev choice, document it).
