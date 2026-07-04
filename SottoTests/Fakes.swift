@@ -234,6 +234,27 @@ actor GatedNotificationScheduler: NotificationScheduling {
     }
 }
 
+actor FakeTranscriptionService: TranscriptionService {
+    nonisolated let backend = TranscriptionBackend.speechAnalyzer
+    private(set) var calls = 0
+    private var remainingFailures: Int
+    private let text: String
+
+    init(text: String, failuresBeforeSuccess: Int = 0) {
+        self.text = text
+        self.remainingFailures = failuresBeforeSuccess
+    }
+
+    func transcribe(file: URL) async throws -> TranscriptionResult {
+        calls += 1
+        if remainingFailures > 0 {
+            remainingFailures -= 1
+            throw TranscriptionError.badResponse(500)
+        }
+        return TranscriptionResult(text: text, segments: [], duration: 1, backend: backend)
+    }
+}
+
 @MainActor
 final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0

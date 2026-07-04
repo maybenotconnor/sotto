@@ -87,6 +87,12 @@ final class CAFSegmentWriter: SegmentWriting {
             if buffer.frameLength == 0 { break }
             try output.write(from: buffer)
         }
+        // Explicit per SPEC — must never become `.complete`, which breaks reads while
+        // locked. Single owner of this attribute for the m4a: both the queue's deferred
+        // transcode and OrphanSalvager's launch-time salvage transcode go through here.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: m4a.path)
     }
 }
 
