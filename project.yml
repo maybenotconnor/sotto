@@ -25,6 +25,8 @@ targets:
         buildPhase: resources
     dependencies:
       - package: FluidAudio
+      - target: SottoWidgets
+        embed: true
     info:
       path: Sotto/Info.plist
       properties:
@@ -34,6 +36,24 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
+  SottoWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SottoWidgets
+      - path: Sotto/LiveActivity/SottoActivityAttributes.swift
+      - path: Sotto/LiveActivity/ToggleListeningIntent.swift
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        PRODUCT_BUNDLE_IDENTIFIER: com.decanlys.Sotto.SottoWidgets
+    info:
+      path: SottoWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Sotto
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SottoTests:
     type: bundle.unit-test
     platform: iOS
