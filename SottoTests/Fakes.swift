@@ -6,11 +6,17 @@ actor FakeAudioSource: AudioSource {
     nonisolated var isAvailable: Bool { true }
 
     private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private(set) var startCallCount = 0
 
     func start() async throws -> AsyncStream<AudioChunk> {
+        startCallCount += 1
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
         self.continuation = continuation
         return stream
+    }
+
+    func startCount() -> Int {
+        startCallCount
     }
 
     func stop() {

@@ -49,4 +49,32 @@ struct ListeningPipelineTests {
         #expect(pipeline.status == .listening)
         await pipeline.stop()
     }
+
+    @Test func concurrentStartsOnlyStartSourceOnce() async throws {
+        let source = FakeAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let first: Void = pipeline.start()
+        async let second: Void = pipeline.start()
+        _ = await (first, second)
+
+        #expect(await source.startCount() == 1)
+        #expect(pipeline.status == .listening)
+        await pipeline.stop()
+    }
+
+    @Test func stopClearsPreRollEvenWithUndrainedChunks() async throws {
+        let source = FakeAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector, preRollSamples: 8192)
+
+        await pipeline.start()
+        await source.emitSilentChunks(count: 3)
+        // Deliberately no waitUntilDrained(): stop() itself must drain then clear.
+        await pipeline.stop()
+
+        #expect(pipeline.preRollSnapshot().isEmpty)
+        #expect(pipeline.status == .idle)
+    }
 }

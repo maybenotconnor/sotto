@@ -29,9 +29,9 @@ final class ListeningPipeline {
 
     func start() async {
         guard status == .idle else { return }
+        status = .listening   // claim before the first await so reentrant starts bounce off the guard
         do {
             let stream = try await source.start()
-            status = .listening
             eventLog.append("Listening…")
             pumpTask = Task {
                 for await chunk in stream {
@@ -39,14 +39,16 @@ final class ListeningPipeline {
                 }
             }
         } catch {
+            status = .idle
             eventLog.append("Start failed: \(error)")
         }
     }
 
     func stop() async {
-        pumpTask?.cancel()
+        guard status != .idle else { return }
+        await source.stop()          // finish the stream: no new chunks after this
+        await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
-        await source.stop()
         await detector.reset()
         preRoll.removeAll()
         status = .idle
