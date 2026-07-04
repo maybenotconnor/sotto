@@ -10,7 +10,7 @@ struct SampleChunker {
     private var pending: [Float] = []
     private var pendingHostTime: UInt64 = 0
 
-    init(chunkSize: Int = 4096) {
+    init(chunkSize: Int = VADConstants.chunkSize) {
         precondition(chunkSize > 0, "chunkSize must be positive")
         self.chunkSize = chunkSize
     }

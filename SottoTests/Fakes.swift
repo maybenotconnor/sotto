@@ -24,7 +24,7 @@ actor FakeAudioSource: AudioSource {
 
     func emitSilentChunks(count: Int) {
         for _ in 0..<count {
-            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: 4096), hostTime: 0))
+            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: VADConstants.chunkSize), hostTime: 0))
         }
     }
 
@@ -70,7 +70,7 @@ actor SlowStartAudioSource: AudioSource {
 
     func emitSilentChunks(count: Int) {
         for _ in 0..<count {
-            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: 4096), hostTime: 0))
+            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: VADConstants.chunkSize), hostTime: 0))
         }
     }
 }

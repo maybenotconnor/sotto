@@ -39,7 +39,7 @@ actor PhoneMicAudioSource: AudioSource {
         // chunks would lose audio. A stalled consumer grows ~256 KB/min — acceptable, visible.
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: hardwareFormat) { buffer, when in
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(VADConstants.chunkSize), format: hardwareFormat) { buffer, when in
             processor.handle(buffer, hostTime: when.hostTime, continuation: continuation)
         }
 

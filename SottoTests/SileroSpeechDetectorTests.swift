@@ -91,4 +91,20 @@ struct SileroSpeechDetectorTests {
         let silence = [Float](repeating: 0, count: Int(silenceDuration * sampleRate))
         return speech + silence
     }
+
+    @Test func pipelineChunkSizeMatchesVadModelContract() {
+        // Canary: if a FluidAudio upgrade changes the model's chunk contract, this fails
+        // loudly instead of VadManager silently padding/truncating our chunks.
+        #expect(VADConstants.chunkSize == 4096)
+        #expect(VADConstants.sampleRate == 16_000)
+    }
+
+    @Test func processedSampleCountAdvancesPerChunk() async throws {
+        let detector = try makeDetector()
+        for _ in 0..<3 {
+            _ = try await detector.process(
+                AudioChunk(samples: [Float](repeating: 0, count: VADConstants.chunkSize), hostTime: 0))
+        }
+        #expect(await detector.processedSampleCount() == VADConstants.chunkSize * 3)
+    }
 }
