@@ -42,8 +42,14 @@ actor TranscriptionQueue {
         draining = true
         defer { draining = false }
 
-        for index in jobs.indices where jobs[index].state == .pending {
+        // Loop until quiescent: jobs enqueued during an in-flight pass (actor reentrancy
+        // at the transcribe await) are picked up by the next pass instead of stranding.
+        while let index = jobs.firstIndex(where: { $0.state == .pending }) {
+            let before = jobs[index]
             await step(index)
+            // Progress guarantee: step() always mutates the job (state, attempts, or
+            // cafURL) — if it ever didn't, bail rather than spin.
+            if jobs.indices.contains(index), jobs[index] == before { break }
         }
     }
 

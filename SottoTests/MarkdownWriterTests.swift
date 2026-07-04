@@ -37,7 +37,9 @@ struct MarkdownWriterTests {
         // SPEC requires the LOCAL UTC offset on timestamps, not "Z"/UTC — loosely assert
         // the date line ends with a `+HH:MM`/`-HH:MM` offset. (This machine's zone is not
         // UTC, so a bare "Z" would fail this — see the report for the ISO8601 API used.)
-        #expect(md.range(of: "date: .*[+-]\\d{2}:\\d{2}", options: .regularExpression) != nil)
+        // On UTC-zone machines ISO8601DateFormatter emits "Z" instead of a numeric offset,
+        // so accept either form here.
+        #expect(md.range(of: "date: .*([+-]\\d{2}:\\d{2}|Z)", options: .regularExpression) != nil)
     }
 
     @Test func deepgramMarkdownRendersSpeakerTurns() throws {

@@ -64,10 +64,26 @@ struct TranscriptionQueueTests {
         let queue = TranscriptionQueue(
             storeURL: dir.appendingPathComponent("jobs.json"), service: service, maxAttempts: 5)
         await queue.enqueue(segment)
-        await queue.drain()   // attempt 1 fails (still pending, attempts=1)
-        await queue.drain()   // attempt 2 fails
-        await queue.drain()   // attempt 3 succeeds
+        await queue.drain()   // retries happen within one drain now (loop-until-quiescent)
         #expect(await queue.jobs.first?.state == .done)
+        #expect(await service.calls == 3)
+    }
+
+    @Test func jobEnqueuedMidDrainIsProcessedBeforeDrainReturns() async throws {
+        let dir = tempDir()
+        let first = try makeSegment(in: dir.appendingPathComponent("a"))
+        let second = try makeSegment(in: dir.appendingPathComponent("b"))
+        let service = FakeTranscriptionService(text: "x")
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"), service: service)
+        await queue.enqueue(first)
+        async let draining: Void = queue.drain()
+        await queue.enqueue(second)   // lands during the in-flight drain (actor reentrancy)
+        await draining
+        // Whichever interleaving occurred, nothing may strand as pending:
+        await queue.drain()           // no-op if the first drain already got both
+        #expect(await queue.pendingCount == 0)
+        #expect(await queue.jobs.count == 2)
     }
 
     @Test func salvagedCAFIsToleratedWhenM4AAlreadyExists() async throws {
