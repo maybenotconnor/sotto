@@ -732,10 +732,7 @@ struct FormatConverterTests {
         #expect(abs(total - 3200) <= 256)
     }
 
-    @Test func rejectsUnconvertibleFormat() {
-        // 0-channel formats can't construct; use a nonsensical conversion instead:
-        // AVAudioConverter init returns nil only for genuinely incompatible pairs,
-        // which Float32 PCM never is — so assert the happy path constructs.
+    @Test func constructsForStandardPCMInputs() {
         let inputFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: 44_100, channels: 1, interleaved: false)!
         #expect(FormatConverter(inputFormat: inputFormat) != nil)
@@ -1442,6 +1439,12 @@ git commit -m "feat: ListeningPipeline and M1 debug UI"
 2. **M3 — Live Activity + interruptions.**
 3. **M4 — Transcription queue + SpeechAnalyzer + Deepgram.**
 4. **M5 — File store.** 5. **M6 — Full UI.**
+
+## Post-review hardening (commit `db830ff`, applied after the final branch review)
+
+The final whole-branch review approved M1 and recommended one hardening commit before M2; it is not reflected in the code blocks above. Contents: double-`start()` guard + session deactivation on failed start + deliberate-unbounded-buffer comment in `PhoneMicAudioSource`; positive-value preconditions in `SampleChunker`/`PreRollBuffer` inits; `rejectsUnconvertibleFormat` renamed to `constructsForStandardPCMInputs` (was asserting the happy path under a rejection name); serialization contract documented on `SpeechDetecting` (callers must serialize `process`/`reset` — the single pump task satisfies it); queued-`stop()` early-return contract documented on `ListeningPipeline.stop()` (M2 revisits these semantics); `os.Logger` on `FormatConverter`'s silent failure paths; two new detector tests including a synthetic speech-like signal that provokes a real `.speechStart` (probability 0.90 at threshold 0.3). Final state: 24 tests, zero Swift warnings.
+
+**Carried forward to M2 planning:** queued-stop semantics decision; move pump + pre-roll off the MainActor into the state-machine actor; `eventLog` cap; real-audio VAD fixture; `SlowStartAudioSource` single-slot gate hangs (rather than fails) on regression.
 
 ## Self-review notes
 
