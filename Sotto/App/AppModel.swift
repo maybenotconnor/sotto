@@ -109,6 +109,15 @@ final class AppModel {
             // Fix 3: salvaged audio must be transcribed, not just recovered. Enqueued
             // BEFORE the gated drain decision below — on an asset-less device these jobs
             // wait as `.pending` just like any other (Fix 1 keeps that safe).
+            //
+            // Ordering invariant (M5 hardening #4): this loop calls enqueueSalvaged THEN
+            // recordQueuedSegment per job — inverted vs the live segment-handler path below
+            // (index-entry-before-job), but safe: nothing can drain the queue mid-loop.
+            // `setTransitionHandler` isn't installed until after this loop, and the launch
+            // drain `Task` is only kicked off later, after the onDeviceReady/hasDeepgramKey
+            // check further down — both strictly after this `for` loop has fully awaited
+            // every iteration. If this loop is ever restructured to spawn concurrent work
+            // (e.g. a `Task` per url), re-derive this invariant or record-before-enqueue.
             for url in salvaged {
                 if let job = await transcriptionQueue.enqueueSalvaged(m4aURL: url) {
                     await dayIndexStore.recordQueuedSegment(
@@ -205,7 +214,11 @@ final class AppModel {
             // root (Documents/Sotto), NEVER bare Documents — Documents is Files-app-writable,
             // so a broader sweep risks deleting files the user placed there themselves.
             Task.detached {
-                _ = RetentionEnforcer.sweep(root: store.rootDirectory, retention: settings.audioRetention)
+                let swept = RetentionEnforcer.sweep(
+                    root: store.rootDirectory, retention: settings.audioRetention)
+                for url in swept {
+                    await dayIndexStore.setAudioRemoved(m4aURL: url)
+                }
             }
         } catch {
             setupError = String(describing: error)

@@ -102,6 +102,51 @@ struct DayIndexTests {
         #expect(await store.index(forDay: dir) == nil)
     }
 
+    @Test func corruptIndexIsRebuiltFromFilesOnNextWrite() async throws {
+        let root = tempRoot()
+        let store = DayIndexStore(rootDirectory: root)
+        let existing = m4a(root, day: "2026-03-14", name: "08-00-00")
+        try Data([0x01]).write(to: existing)                       // pre-existing audio on disk
+        let dir = existing.deletingLastPathComponent()
+        try Data([0x7b, 0x00]).write(to: dir.appendingPathComponent("_day.json"))   // corrupt
+
+        let newSegment = m4a(root, day: "2026-03-14", name: "09-15-30")
+        await store.recordQueuedSegment(m4aURL: newSegment, startTime: Date(), duration: 5)
+
+        let index = await store.index(forDay: dir)
+        #expect(index?.segments.count == 2)                        // rebuilt 08-00-00 + new one
+        #expect(index?.segments.contains { $0.id == "08-00-00" } == true)
+    }
+
+    @Test func rebuildAndPersistWritesTheRebuiltIndexToDisk() async throws {
+        let root = tempRoot()
+        let store = DayIndexStore(rootDirectory: root)
+        let existing = m4a(root, day: "2026-03-14", name: "08-00-00")
+        let dir = existing.deletingLastPathComponent()
+        let md = """
+        ---
+        date: 2026-03-14T08:00:00-04:00
+        duration: 12
+        backend: speechAnalyzer
+        ---
+
+        Hello world.
+        """
+        try md.write(to: dir.appendingPathComponent("08-00-00.md"), atomically: true, encoding: .utf8)
+        try Data([0x01]).write(to: existing)
+        try Data([0x7b, 0x00]).write(to: dir.appendingPathComponent("_day.json"))   // corrupt
+
+        let rebuilt = await store.rebuildAndPersist(dayDirectory: dir)
+        #expect(rebuilt.segments.count == 1)
+        #expect(rebuilt.segments.first?.id == "08-00-00")
+
+        // The corrupt file was replaced — a plain load now succeeds and matches.
+        let reloaded = await store.index(forDay: dir)
+        #expect(reloaded?.segments.count == 1)
+        #expect(reloaded?.segments.first?.id == "08-00-00")
+        #expect(reloaded?.segments.first?.transcriptionState == "done")
+    }
+
     @Test func rebuildsIndexFromMarkdownAndOrphanAudio() async throws {
         let root = tempRoot()
         let dir = root.appendingPathComponent("2026-03-14")

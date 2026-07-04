@@ -35,7 +35,10 @@ actor DayIndexStore {
 
     func recordQueuedSegment(m4aURL: URL, startTime: Date, duration: TimeInterval) {
         let dayDirectory = m4aURL.deletingLastPathComponent()
-        var index = load(dayDirectory) ?? empty(for: dayDirectory)
+        // A corrupt `_day.json` (Documents is user-editable) must not silently discard the
+        // day's earlier segments — rebuild from disk (a fresh/empty folder rebuilds empty,
+        // so this is strictly better than falling back to `empty(for:)`).
+        var index = load(dayDirectory) ?? DayIndexRebuilder.rebuild(dayDirectory: dayDirectory)
         let entry = DaySegmentEntry(
             id: m4aURL.deletingPathExtension().lastPathComponent,
             startTime: startTime, duration: duration, backend: nil,
@@ -61,7 +64,8 @@ actor DayIndexStore {
     func recordGap(onDayOf date: Date, from: Date, reason: String) {
         let dayDirectory = rootDirectory.appendingPathComponent(
             Self.dayFormatter.string(from: date), isDirectory: true)
-        var index = load(dayDirectory) ?? empty(for: dayDirectory)
+        // Same corrupt-index rebuild fallback as recordQueuedSegment above.
+        var index = load(dayDirectory) ?? DayIndexRebuilder.rebuild(dayDirectory: dayDirectory)
         index.gaps.append(DayGapEntry(from: from, reason: reason))
         index.gaps.sort { $0.from < $1.from }
         write(index, to: dayDirectory)
@@ -71,11 +75,15 @@ actor DayIndexStore {
         load(dayDirectory)
     }
 
-    // MARK: - Private
-
-    private func empty(for dayDirectory: URL) -> DayIndex {
-        DayIndex(date: dayDirectory.lastPathComponent, segments: [], gaps: [])
+    /// M6's list view calls this when a day folder has files but no readable index
+    /// (SPEC: the index is rebuildable). Rebuilds from disk and persists atomically.
+    func rebuildAndPersist(dayDirectory: URL) -> DayIndex {
+        let rebuilt = DayIndexRebuilder.rebuild(dayDirectory: dayDirectory)
+        write(rebuilt, to: dayDirectory)
+        return rebuilt
     }
+
+    // MARK: - Private
 
     private func mutateEntry(for m4aURL: URL, _ mutate: (inout DaySegmentEntry) -> Void) {
         let dayDirectory = m4aURL.deletingLastPathComponent()
@@ -114,6 +122,10 @@ actor DayIndexStore {
         }
         guard let data = try? encoder.encode(index) else { return }
         try? data.write(to: url, options: .atomic)   // temp file + rename per SPEC
+        // Between the atomic rename above and setAttributes below, the file briefly exists
+        // at the default (non-completeUntilFirstUserAuthentication) protection class. Writes
+        // only ever happen while the app is foregrounded and running, so this window is
+        // accepted rather than closed.
         try? FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: url.path)
