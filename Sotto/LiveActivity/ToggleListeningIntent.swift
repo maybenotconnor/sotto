@@ -15,7 +15,11 @@ struct ToggleListeningIntent: AudioRecordingIntent {
     static let title: LocalizedStringResource = "Pause or resume listening"
 
     func perform() async throws -> some IntentResult {
-        NotificationCenter.default.post(name: .sottoToggleListening, object: nil)
+        // Post on the MainActor: AppIntent.perform() carries no thread guarantee, and the
+        // app-side .onReceive consumer mutates SwiftUI state.
+        await MainActor.run {
+            NotificationCenter.default.post(name: .sottoToggleListening, object: nil)
+        }
         return .result()
     }
 }
