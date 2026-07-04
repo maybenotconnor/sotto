@@ -117,12 +117,13 @@ actor ThrowingSpeechDetector: SpeechDetecting {
     }
 }
 
-/// Records appended samples; finalize/discard bookkeeping for state-machine tests.
+/// Records appended samples; close/discard bookkeeping for state-machine tests.
 final class FakeSegmentWriter: SegmentWriting {
     private(set) var writtenSampleCount = 0
     private(set) var appendCalls: [Int] = []      // sample counts per append
     private(set) var finalized = false
     private(set) var discarded = false
+    let cafURL = URL(fileURLWithPath: "/tmp/fake-\(UUID().uuidString).caf")
     let m4aURL = URL(fileURLWithPath: "/tmp/fake-\(UUID().uuidString).m4a")
 
     func append(_ samples: [Float]) throws {
@@ -130,9 +131,8 @@ final class FakeSegmentWriter: SegmentWriting {
         writtenSampleCount += samples.count
     }
 
-    func finalize() throws -> URL {
+    func close() {
         finalized = true
-        return m4aURL
     }
 
     func discard() {

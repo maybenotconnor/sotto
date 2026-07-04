@@ -150,6 +150,7 @@ struct RecorderStateMachineTests {
         let segments = received.withLock { $0 }
         #expect(segments.count == 1)
         #expect(segments[0].duration > 0)
+        #expect(segments[0].cafURL.lastPathComponent.hasSuffix(".caf"))
     }
 
     @Test func vadErrorsDuringSilenceStillReachTimeout() async throws {

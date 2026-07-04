@@ -3,17 +3,19 @@ import Foundation
 
 /// Crash-safe segment writer (SPEC "Recording writer", option 2): capture is written as
 /// 16 kHz mono Int16 PCM **CAF** — CAF is valid without finalization, so a process death
-/// mid-segment loses nothing already flushed. `finalize()` transcodes to AAC .m4a
+/// mid-segment loses nothing already flushed. `close()` just flushes and releases the
+/// file handle — it is deliberately FAST; transcoding to AAC .m4a
 /// (~0.36 MB/min at 48 kbps — the highest bit rate the AAC encoder's discrete-rate table
 /// offers for 16 kHz mono; 64 kbps, the round-number target, isn't an available step)
-/// and removes the CAF. The same transcode salvages orphaned CAFs on launch.
+/// and removing the CAF is the transcription queue's job (M4). The same transcode
+/// salvages orphaned CAFs on launch.
 final class CAFSegmentWriter: SegmentWriting {
     enum WriterError: Error {
         case bufferAllocationFailed
     }
 
-    private let cafURL: URL
-    private let m4aURL: URL
+    let cafURL: URL
+    let m4aURL: URL
     private var file: AVAudioFile?
     private(set) var writtenSampleCount = 0
 
@@ -56,15 +58,8 @@ final class CAFSegmentWriter: SegmentWriting {
         writtenSampleCount += samples.count
     }
 
-    func finalize() throws -> URL {
+    func close() {
         file = nil   // AVAudioFile flushes and closes on release
-        try Self.transcodeToM4A(caf: cafURL, m4a: m4aURL)
-        try? FileManager.default.removeItem(at: cafURL)
-        // Explicit per SPEC — must never become `.complete`, which breaks writes while locked.
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: m4aURL.path)
-        return m4aURL
     }
 
     func discard() {

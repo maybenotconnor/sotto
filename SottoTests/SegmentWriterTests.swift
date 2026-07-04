@@ -25,16 +25,16 @@ struct SegmentWriterTests {
         #expect(!FileManager.default.fileExists(atPath: m4a.path))
     }
 
-    @Test func finalizeProducesReadableM4AAndDeletesCAF() throws {
+    @Test func closeKeepsCAFOnDiskAndDeferredTranscodeProducesM4A() throws {
         let (caf, m4a) = tempURLs()
         let writer = try CAFSegmentWriter(cafURL: caf, m4aURL: m4a)
         try writer.append(sineChunk(seconds: 1.0))
-        let url = try writer.finalize()
-        #expect(url == m4a)
-        #expect(!FileManager.default.fileExists(atPath: caf.path))
+        writer.close()
+        #expect(FileManager.default.fileExists(atPath: caf.path))     // close is NOT transcode
+        #expect(!FileManager.default.fileExists(atPath: m4a.path))
+        try CAFSegmentWriter.transcodeToM4A(caf: caf, m4a: m4a)       // the queue's job
         let file = try AVAudioFile(forReading: m4a)
-        let duration = Double(file.length) / file.processingFormat.sampleRate
-        #expect(abs(duration - 1.0) < 0.15)   // AAC priming/padding tolerance
+        #expect(abs(Double(file.length) / file.processingFormat.sampleRate - 1.0) < 0.15)
     }
 
     @Test func discardRemovesEverything() throws {

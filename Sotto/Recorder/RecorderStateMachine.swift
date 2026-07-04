@@ -191,19 +191,16 @@ actor RecorderStateMachine: SegmentRecording {
             lastEvent = "Discarded short segment (\(String(format: "%.1f", speechDuration)) s)"
             return
         }
-        do {
-            let url = try closing.finalize()
-            finalizedCount += 1
-            lastEvent = "Saved conversation"
-            let segment = FinalizedSegment(
-                audioURL: url,
-                startDate: startDate,
-                duration: secondsOf(closing.writtenSampleCount),
-                speechDuration: speechDuration)
-            segmentHandler?(segment)
-        } catch {
-            lastEvent = "Finalize failed: \(error)"
-        }
+        closing.close()
+        finalizedCount += 1
+        lastEvent = "Saved conversation"
+        let segment = FinalizedSegment(
+            cafURL: closing.cafURL,
+            m4aURL: closing.m4aURL,
+            startDate: startDate,
+            duration: secondsOf(closing.writtenSampleCount),
+            speechDuration: speechDuration)
+        segmentHandler?(segment)
     }
 
     private func secondsOf(_ samples: Int) -> TimeInterval {
