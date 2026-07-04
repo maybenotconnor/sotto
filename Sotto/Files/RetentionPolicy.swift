@@ -93,6 +93,13 @@ extension SettingsStore {
         }
         nonmutating set { defaults.set(newValue, forKey: "deepgramEnabled") }
     }
+
+    /// M6b onboarding gate: `bool(forKey:)` already returns false when unset, which is
+    /// exactly the "not yet completed" default for a fresh install — no clamp needed.
+    var hasCompletedOnboarding: Bool {
+        get { defaults.bool(forKey: "hasCompletedOnboarding") }
+        nonmutating set { defaults.set(newValue, forKey: "hasCompletedOnboarding") }
+    }
 }
 
 enum RetentionEnforcer {

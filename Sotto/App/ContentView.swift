@@ -6,34 +6,49 @@ import UIKit
 struct ContentView: View {
     let model: AppModel
     @State private var micDenied = false
+    // SettingsStore/UserDefaults isn't Observable, so first-run state is mirrored into this
+    // @State on appearance (`.task` below) and flipped by OnboardingView's completion closure
+    // — the mirror is what actually drives the view swap; the underlying setting is the
+    // source of truth for the NEXT launch.
+    @State private var showOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let setupError = model.setupError {
-                    ContentUnavailableView(
-                        "Setup failed",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(setupError))
-                } else if let pipeline = model.pipeline {
-                    MainScreen(model: model, pipeline: pipeline, micDenied: micDenied)
-                } else {
-                    ProgressView("Preparing…")
+        Group {
+            if showOnboarding {
+                OnboardingView(model: model) {
+                    model.settings.hasCompletedOnboarding = true
+                    showOnboarding = false
                 }
-            }
-            .navigationTitle("Sotto")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        SettingsView(model: model)
-                    } label: {
-                        Image(systemName: "gear")
+            } else {
+                NavigationStack {
+                    Group {
+                        if let setupError = model.setupError {
+                            ContentUnavailableView(
+                                "Setup failed",
+                                systemImage: "exclamationmark.triangle",
+                                description: Text(setupError))
+                        } else if let pipeline = model.pipeline {
+                            MainScreen(model: model, pipeline: pipeline, micDenied: micDenied)
+                        } else {
+                            ProgressView("Preparing…")
+                        }
+                    }
+                    .navigationTitle("Sotto")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            NavigationLink {
+                                SettingsView(model: model)
+                            } label: {
+                                Image(systemName: "gear")
+                            }
+                        }
                     }
                 }
             }
         }
         .task {
+            showOnboarding = !model.settings.hasCompletedOnboarding
             await model.ensureSetUp()
             micDenied = AVAudioApplication.shared.recordPermission == .denied
         }
