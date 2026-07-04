@@ -114,6 +114,7 @@ xcuserdata/
 DerivedData/
 .DS_Store
 *.xcresult
+.superpowers/
 ```
 
 - [ ] **Step 2: Create `project.yml`**
@@ -151,6 +152,9 @@ targets:
     platform: iOS
     sources:
       - path: SottoTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES   # XcodeGen emits no Info.plist for test bundles; signing fails without this
     dependencies:
       - target: Sotto
 schemes:
@@ -774,7 +778,10 @@ import AVFoundation
 /// Converts hardware-format tap buffers to the pipeline format: 16 kHz mono Float32.
 /// One instance per tap installation (AVAudioConverter carries resampler state);
 /// rebuild it on route changes when the hardware format shifts (M3).
-final class FormatConverter {
+///
+/// `@unchecked Sendable`: instances are confined to the audio tap thread behind
+/// `TapProcessor`'s `Mutex`; the compiler cannot see that confinement.
+final class FormatConverter: @unchecked Sendable {
     static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
 
@@ -797,7 +804,10 @@ final class FormatConverter {
             return []
         }
 
-        var consumed = false
+        // The converter invokes the input block synchronously on the calling thread during
+        // `convert`, so these captures never actually cross threads (block is marked @Sendable).
+        nonisolated(unsafe) var consumed = false
+        nonisolated(unsafe) let inputBuffer = buffer
         var conversionError: NSError?
         converter.convert(to: output, error: &conversionError) { _, outStatus in
             if consumed {
@@ -807,7 +817,7 @@ final class FormatConverter {
             }
             consumed = true
             outStatus.pointee = .haveData
-            return buffer
+            return inputBuffer
         }
 
         guard conversionError == nil, let channelData = output.floatChannelData else {
@@ -967,12 +977,15 @@ actor FakeAudioSource: AudioSource {
     nonisolated var isAvailable: Bool { true }
 
     private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private(set) var startCallCount = 0
 
     func start() async throws -> AsyncStream<AudioChunk> {
+        startCallCount += 1
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
         self.continuation = continuation
         return stream
     }
+
 
     func stop() {
         continuation?.finish()
@@ -987,6 +1000,48 @@ actor FakeAudioSource: AudioSource {
 
     func finish() {
         continuation?.finish()
+    }
+}
+
+/// AudioSource whose start() suspends until the test releases it — for ordering races deterministically.
+actor SlowStartAudioSource: AudioSource {
+    nonisolated let sourceType: AudioSourceType = .phoneMic
+    nonisolated var isAvailable: Bool { true }
+
+    private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private var startGate: CheckedContinuation<Void, Never>?
+    private var startRequested: CheckedContinuation<Void, Never>?
+    private var startWasRequested = false
+
+    func start() async throws -> AsyncStream<AudioChunk> {
+        startWasRequested = true
+        startRequested?.resume()
+        startRequested = nil
+        await withCheckedContinuation { startGate = $0 }
+        let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
+        self.continuation = continuation
+        return stream
+    }
+
+    func waitUntilStartRequested() async {
+        if startWasRequested { return }
+        await withCheckedContinuation { startRequested = $0 }
+    }
+
+    func releaseStart() {
+        startGate?.resume()
+        startGate = nil
+    }
+
+    func stop() {
+        continuation?.finish()
+        continuation = nil
+    }
+
+    func emitSilentChunks(count: Int) {
+        for _ in 0..<count {
+            continuation?.yield(AudioChunk(samples: [Float](repeating: 0, count: 4096), hostTime: 0))
+        }
     }
 }
 
@@ -1064,6 +1119,72 @@ struct ListeningPipelineTests {
         #expect(pipeline.status == .listening)
         await pipeline.stop()
     }
+
+    @Test func concurrentStartsOnlyStartSourceOnce() async throws {
+        let source = FakeAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let first: Void = pipeline.start()
+        async let second: Void = pipeline.start()
+        _ = await (first, second)
+
+        #expect(await source.startCallCount == 1)
+        #expect(pipeline.status == .listening)
+        await pipeline.stop()
+    }
+
+    @Test func stopClearsPreRollEvenWithUndrainedChunks() async throws {
+        let source = FakeAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector, preRollSamples: 8192)
+
+        await pipeline.start()
+        await source.emitSilentChunks(count: 3)
+        // Deliberately no waitUntilDrained(): stop() itself must drain then clear.
+        await pipeline.stop()
+
+        // Give any orphaned pump task scheduler time — a leaked pump would repopulate preRoll here.
+        for _ in 0..<10 { await Task.yield() }
+        #expect(pipeline.preRollSnapshot().isEmpty)
+        #expect(pipeline.status == .idle)
+    }
+
+    @Test func stopDuringStartLeavesPipelineIdleWithNoPump() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.stop()            // wins the race while start() is suspended
+        await source.releaseStart()
+        await starting
+
+        #expect(pipeline.status == .idle)
+        await source.emitSilentChunks(count: 2)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(pipeline.preRollSnapshot().isEmpty)   // no live pump is consuming chunks
+    }
+
+    @Test func startStopStartBurstEndsIdleWithoutOrphanedPump() async throws {
+        let source = SlowStartAudioSource()
+        let detector = FakeSpeechDetector(script: [:])
+        let pipeline = ListeningPipeline(source: source, detector: detector)
+
+        async let firstStart: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await pipeline.stop()                              // queued: start is mid-flight
+        async let secondStart: Void = pipeline.start()     // must no-op: a transition is in flight
+        for _ in 0..<5 { await Task.yield() }              // let secondStart hit the guard while the gate is closed
+        await source.releaseStart()
+        _ = await (firstStart, secondStart)
+
+        #expect(pipeline.status == .idle)                  // the queued stop won after the start completed
+        await source.emitSilentChunks(count: 2)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(pipeline.preRollSnapshot().isEmpty)        // no orphaned pump is consuming chunks
+    }
 }
 ```
 
@@ -1102,6 +1223,10 @@ final class ListeningPipeline {
     private let detector: any SpeechDetecting
     private var preRoll: PreRollBuffer
     private var pumpTask: Task<Void, Never>?
+    // Transitions are mutually exclusive: a stop() arriving during an in-flight start() is
+    // queued and honored when the start completes; start() during any transition is a no-op.
+    private var isTransitioning = false
+    private var stopRequestedDuringTransition = false
 
     init(source: any AudioSource, detector: any SpeechDetecting, preRollSamples: Int = 16_000) {
         self.source = source
@@ -1110,29 +1235,47 @@ final class ListeningPipeline {
     }
 
     func start() async {
-        guard status == .idle else { return }
+        guard status == .idle, !isTransitioning else { return }
+        isTransitioning = true
+        status = .listening
+        var started = false
         do {
             let stream = try await source.start()
-            status = .listening
             eventLog.append("Listening…")
             pumpTask = Task {
                 for await chunk in stream {
                     await self.handle(chunk)
                 }
             }
+            started = true
         } catch {
+            status = .idle
             eventLog.append("Start failed: \(error)")
+        }
+        isTransitioning = false
+        let stopWasRequested = stopRequestedDuringTransition
+        stopRequestedDuringTransition = false
+        if started && stopWasRequested {
+            await stop()   // honor the stop that arrived mid-start
         }
     }
 
     func stop() async {
-        pumpTask?.cancel()
+        if isTransitioning {
+            stopRequestedDuringTransition = true
+            return
+        }
+        guard status != .idle else { return }
+        isTransitioning = true
+        await source.stop()          // finish the stream: no new chunks after this
+        await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
-        await source.stop()
         await detector.reset()
         preRoll.removeAll()
         status = .idle
         eventLog.append("Stopped")
+        isTransitioning = false
+        stopRequestedDuringTransition = false
     }
 
     /// Test hook: waits for the pump task to finish draining a closed stream.
