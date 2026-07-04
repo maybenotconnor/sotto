@@ -74,6 +74,25 @@ actor PhoneMicAudioSource: AudioSource {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    /// Route change (.oldDeviceUnavailable): the hardware format may have changed (SPEC —
+    /// e.g. wired mic unplugged). Rebuild converter + tap on the SAME stream; engine keeps
+    /// running. No-op when not capturing.
+    func rebuildTap() throws {
+        guard let engine, let continuation else { return }
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        let hardwareFormat = input.outputFormat(forBus: 0)
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0,
+              let converter = FormatConverter(inputFormat: hardwareFormat) else {
+            throw AudioSourceError.invalidHardwareFormat
+        }
+        let processor = TapProcessor(converter: converter)
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(VADConstants.chunkSize),
+                         format: hardwareFormat) { buffer, when in
+            processor.handle(buffer, hostTime: when.hostTime, continuation: continuation)
+        }
+    }
+
     /// `.playAndRecord` + `.mixWithOthers` so activating the session never pauses the
     /// user's music. No Bluetooth input options: AirPods stay on A2DP output while the
     /// phone mic records (see SPEC "PhoneMicAudioSource").

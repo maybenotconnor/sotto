@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @State private var pipeline: ListeningPipeline?
     @State private var setupError: String?
     @State private var recoveryNotice: String?
     @State private var setUpStarted = false
+    @State private var observer: AudioSessionObserver?
 
     var body: some View {
         NavigationStack {
@@ -23,6 +25,9 @@ struct ContentView: View {
             .navigationTitle("Sotto")
         }
         .task { await setUp() }
+        .onReceive(NotificationCenter.default.publisher(for: .sottoToggleListening)) { _ in
+            Task { await pipeline?.toggleFromIntent() }
+        }
     }
 
     @MainActor
@@ -64,8 +69,33 @@ struct ContentView: View {
                 detector: detector,
                 writerFactory: CAFSegmentWriterFactory(store: store),
                 store: store)
-            pipeline = ListeningPipeline(
-                source: PhoneMicAudioSource(), recorder: recorder, heartbeat: heartbeat)
+            let source = PhoneMicAudioSource()
+            let newPipeline = ListeningPipeline(
+                source: source, recorder: recorder, heartbeat: heartbeat,
+                liveActivity: SottoLiveActivityController(),
+                notifications: UserNotificationScheduler())
+            pipeline = newPipeline
+
+            let sessionObserver = AudioSessionObserver(backgroundTasks: UIKitBackgroundTasks())
+            sessionObserver.onInterruptionBegan = { [weak newPipeline] in
+                await newPipeline?.interrupt()
+            }
+            sessionObserver.onInterruptionEndedShouldResume = { [weak newPipeline] shouldResume in
+                // Foregrounded + system says resume → restart. Backgrounded: engine.start()
+                // fails (561145187); recovery stays with the intent/notification/app-open.
+                guard shouldResume, UIApplication.shared.applicationState == .active else { return }
+                await newPipeline?.resumeFromInterruption()
+            }
+            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source] in
+                try? await source?.rebuildTap()
+            }
+            sessionObserver.onMediaServicesReset = { [weak newPipeline] in
+                // Full teardown + rebuild (SPEC): park, then restart the whole stack.
+                await newPipeline?.interrupt()
+                await newPipeline?.resumeFromInterruption()
+            }
+            sessionObserver.startObserving()
+            observer = sessionObserver
         } catch {
             setupError = String(describing: error)
         }
