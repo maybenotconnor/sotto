@@ -26,31 +26,6 @@ enum HomeRow: Identifiable {
     }
 }
 
-/// Pulsing in-progress row shown while a segment is open (user decision: live row).
-struct LiveRecordingRow: View {
-    let startedAt: Date
-    @State private var pulsing = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(.red)
-                .frame(width: 10, height: 10)
-                .opacity(pulsing ? 0.35 : 1.0)
-                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true),
-                           value: pulsing)
-            Text("Recording…").font(.headline)
-            Spacer()
-            Text(startedAt, style: .timer)
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
-        .onAppear { pulsing = true }
-        .accessibilityLabel("Recording in progress")
-    }
-}
-
 struct GapRowView: View {
     let gap: DayGapEntry
 

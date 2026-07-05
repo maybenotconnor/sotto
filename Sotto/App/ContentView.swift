@@ -64,10 +64,12 @@ struct ContentView: View {
     }
 }
 
-/// M9 unified home: compact status card + full-weight banners (scrolling away with the
-/// list — the always-visible recording indication is carried by the system orange mic dot
-/// and the Live Activity, not by this header), a live "Recording…" row while a segment is
-/// open, then infinite-scroll history with sticky day headers, newest first.
+/// M9 unified home: a single morphing status header — one status card that also carries the
+/// "Recording…" state and segment timer while a segment is open, so there is never a second
+/// header-like row below it (user-reported: a separate live row duplicated the header) —
+/// plus full-weight banners (scrolling away with the list — the always-visible recording
+/// indication is carried by the system orange mic dot and the Live Activity, not by this
+/// header), then infinite-scroll history with sticky day headers, newest first.
 private struct HomeScreen: View {
     let model: AppModel
     let pipeline: ListeningPipeline
@@ -96,10 +98,6 @@ private struct HomeScreen: View {
             }
             .listRowSeparator(.hidden)
 
-            if let started = pipeline.currentSegmentStartDate {
-                Section { LiveRecordingRow(startedAt: started) }
-            }
-
             ForEach(model.historySections) { section in
                 Section(header: Text(dayTitle(for: section))) {
                     ForEach(HomeRow.rows(for: section.index)) { row in
@@ -117,9 +115,7 @@ private struct HomeScreen: View {
                 .listRowSeparator(.hidden)
             } else if model.historySections.isEmpty && model.hasLoadedHistoryOnce {
                 Section {
-                    Text(pipeline.status != .idle
-                        ? "Nothing recorded yet — Sotto is listening."
-                        : "Start listening to capture your first conversation.")
+                    Text(emptyStateText)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
@@ -151,11 +147,17 @@ private struct HomeScreen: View {
 
     private var statusCard: some View {
         HStack(spacing: 12) {
-            Circle().fill(statusColor).frame(width: 12, height: 12)
+            if case .segmentOpen = headerState {
+                // Reuses the old LiveRecordingRow's pulse treatment — now it lives on the
+                // header itself instead of on a second, separate row underneath it.
+                PulsingDot(color: .red)
+            } else {
+                Circle().fill(headerState.dotColor).frame(width: 12, height: 12)
+            }
             VStack(alignment: .leading, spacing: 1) {
-                Text(statusLabel).font(.headline)
-                if pipeline.status != .idle, let started = pipeline.sessionStartedAt {
-                    Text(started, style: .timer)
+                Text(headerState.label).font(.headline)
+                if let timerStart = headerState.timerStart {
+                    Text(timerStart, style: .timer)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -238,25 +240,66 @@ private struct HomeScreen: View {
         }
     }
 
-    private var statusLabel: String {
-        switch pipeline.status {
-        case .idle: "Idle"
-        case .starting: "Starting…"
-        case .listening: "Listening"
-        case .recording: "Recording"
-        case .silence: "Listening"
-        case .interrupted: pipeline.haltReason == .userPause ? "Paused by you" : "Paused — call"
+    /// The single header's state machine: one segment-open case takes priority over the raw
+    /// pipeline status so the header morphs into the old live row's "Recording…" + segment
+    /// timer instead of showing both a status card AND a separate live row (user-reported:
+    /// "you build a second header").
+    private enum HeaderState {
+        case idle
+        case starting
+        case interrupted(ListeningPipeline.HaltReason?)
+        case listening(sessionStart: Date?)
+        case segmentOpen(start: Date)
+
+        var label: String {
+            switch self {
+            case .idle: "Idle"
+            case .starting: "Starting…"
+            case .interrupted(let reason): reason == .userPause ? "Paused by you" : "Paused — call"
+            case .listening: "Listening"
+            case .segmentOpen: "Recording…"
+            }
+        }
+
+        var dotColor: Color {
+            switch self {
+            case .idle, .starting: .secondary
+            case .interrupted: .orange
+            case .listening: .green
+            case .segmentOpen: .red
+            }
+        }
+
+        /// One timer at a time: the segment timer while a segment is open, else the session
+        /// timer while listening/silence, else none.
+        var timerStart: Date? {
+            switch self {
+            case .segmentOpen(let start): start
+            case .listening(let sessionStart): sessionStart
+            case .idle, .starting, .interrupted: nil
+            }
         }
     }
 
-    private var statusColor: Color {
-        switch pipeline.status {
-        case .idle: .secondary
-        case .starting: .secondary
-        case .listening, .silence: .green
-        case .recording: .red
-        case .interrupted: .orange
+    private var headerState: HeaderState {
+        if let started = pipeline.currentSegmentStartDate {
+            return .segmentOpen(start: started)
         }
+        switch pipeline.status {
+        case .idle: return .idle
+        case .starting: return .starting
+        case .interrupted: return .interrupted(pipeline.haltReason)
+        case .listening, .recording, .silence: return .listening(sessionStart: pipeline.sessionStartedAt)
+        }
+    }
+
+    private var emptyStateText: String {
+        if pipeline.currentSegmentStartDate != nil {
+            return "Recording your first conversation…"
+        }
+        return pipeline.status != .idle
+            ? "Nothing recorded yet — Sotto is listening."
+            : "Start listening to capture your first conversation."
     }
 
     private func dayTitle(for section: AppModel.HistorySection) -> String {
@@ -286,6 +329,22 @@ private struct HomeScreen: View {
                 }
             }
         }
+    }
+}
+
+/// Pulsing dot for the header's segment-open state — the same pulse treatment the old
+/// standalone `LiveRecordingRow` used, now folded into the single status header.
+private struct PulsingDot: View {
+    let color: Color
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 12, height: 12)
+            .opacity(pulsing ? 0.35 : 1.0)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+            .onAppear { pulsing = true }
     }
 }
 
