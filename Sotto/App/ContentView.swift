@@ -55,7 +55,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             micDenied = AVAudioApplication.shared.recordPermission == .denied
-            Task { await model.refreshTodaySummary() }
+            Task { await model.refreshLoadedHistory() }
             // SPEC: leftovers drain on next resume/foreground — also releases jobs that were
             // gated on Wi-Fi-only uploads while the user was away from home.
             Task { await model.queue?.drain() }
@@ -82,8 +82,6 @@ private struct MainScreen: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-
-            todaySummary
 
             startStopButton
 
@@ -142,25 +140,6 @@ private struct MainScreen: View {
         }
         if pipeline.diskGuardActive {
             NoticeBanner(text: "Low disk space — new recordings are paused.", color: .red)
-        }
-    }
-
-    private var todaySummary: some View {
-        NavigationLink {
-            HistoryListView(model: model)
-        } label: {
-            Group {
-                if let summary = model.todaySummary {
-                    Text("\(summary.count) conversations · \(Int(summary.totalMinutes)) min")
-                } else {
-                    Text("No conversations yet today")
-                }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        .task(id: pipeline.finalizedCount) {
-            await model.refreshTodaySummary()
         }
     }
 

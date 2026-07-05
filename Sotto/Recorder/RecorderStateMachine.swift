@@ -214,6 +214,6 @@ actor RecorderStateMachine: SegmentRecording {
     private func snapshot() -> RecorderSnapshot {
         RecorderSnapshot(
             state: state, finalizedCount: finalizedCount, lastEvent: lastEvent,
-            diskGuardActive: diskGuardActive)
+            diskGuardActive: diskGuardActive, currentSegmentStartDate: segmentStartDate)
     }
 }

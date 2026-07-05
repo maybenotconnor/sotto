@@ -20,11 +20,14 @@ final class AppModel {
         case unsupported
     }
 
-    /// SPEC Main screen "today summary": conversation count + total minutes for the
-    /// current local day.
-    struct TodaySummary: Equatable {
-        let count: Int
-        let totalMinutes: Double
+    /// M9 unified home: one day's worth of history — a loaded page's unit. `index` is kept
+    /// in sync by `refreshLoadedHistory()` (re-read after a finalize/delete) rather than
+    /// re-derived on every access.
+    struct HistorySection: Identifiable, Equatable {
+        let id: String          // "2026-03-14" (day folder name)
+        let date: Date          // parsed day start (local)
+        let dayDirectory: URL
+        var index: DayIndex
     }
 
     /// M6b Settings "Storage" section: on-disk footprint split by kind, walked live rather
@@ -41,21 +44,32 @@ final class AppModel {
     private(set) var queue: TranscriptionQueue?
     private(set) var dayIndex: DayIndexStore?
     private(set) var assetState: AssetState = .unknown
-    private(set) var todaySummary: TodaySummary?
+    /// M9 unified home: the loaded window of history, newest day first.
+    private(set) var historySections: [HistorySection] = []
+    /// True while unvisited day directories remain under `segmentRoot` (paging isn't
+    /// exhausted yet).
+    private(set) var hasMoreHistory = false
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
     private let installer: any SpeechAssetInstalling
     private let networkMonitor: any NetworkMonitoring
+    /// Test seam: when set, `performSetUp` roots BOTH the `SegmentStore` and `segmentRoot`
+    /// here instead of the real Documents/Sotto directory, so history paging and the
+    /// `DayIndexStore` operate purely on a synthetic directory tree.
+    private let segmentRootOverride: URL?
     // Default mirrors SegmentStore's own default root; overwritten with the real
     // `store.rootDirectory` during performSetUp once `store` exists.
     private var segmentRoot: URL = FileManager.default.urls(
         for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Sotto", isDirectory: true)
+    /// Directory names (newest first) not yet consumed by history paging — populated fresh by
+    /// `loadInitialHistory()`, drained 7-content-days-at-a-time by `loadNextHistoryPage()`.
+    private var pendingHistoryDirectoryNames: [String] = []
 
-    /// Pinned "yyyy-MM-dd" formatter (POSIX locale, Gregorian calendar) shared by
-    /// `refreshTodaySummary` and `dayDirectory(for:)` — folder names must not drift with the
-    /// user's locale/calendar settings (SPEC "File output" store layout).
+    /// Pinned "yyyy-MM-dd" formatter (POSIX locale, Gregorian calendar) shared by history
+    /// paging and `dayDirectory(for:)` — folder names must not drift with the user's
+    /// locale/calendar settings (SPEC "File output" store layout).
     private static let dayFolderFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -66,10 +80,12 @@ final class AppModel {
 
     init(
         assetInstaller: (any SpeechAssetInstalling)? = nil,
-        networkMonitor: (any NetworkMonitoring)? = nil
+        networkMonitor: (any NetworkMonitoring)? = nil,
+        segmentRootOverride: URL? = nil
     ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
         self.networkMonitor = networkMonitor ?? WiFiMonitor()
+        self.segmentRootOverride = segmentRootOverride
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
@@ -107,19 +123,74 @@ final class AppModel {
         }
     }
 
-    /// SPEC Main screen "today summary": re-derived from `_day.json` for the current local
-    /// day whenever the pipeline finalizes a new segment (Main screen calls this via
-    /// `.task(id: pipeline.finalizedCount)`).
-    func refreshTodaySummary() async {
-        guard let dayIndex else { return }
-        let dir = dayDirectory(for: Date())
-        guard let index = await dayIndex.index(forDay: dir), !index.segments.isEmpty else {
-            todaySummary = nil
-            return
+    /// M9 unified home: resets paging and loads the first 7-content-day page, newest first.
+    func loadInitialHistory() async {
+        historySections = []
+        pendingHistoryDirectoryNames = sortedHistoryDirectoryNames()
+        await loadNextHistoryPage()
+    }
+
+    /// M9 unified home: appends the next 7-content-day page — a no-op once paging is
+    /// exhausted (`hasMoreHistory == false`).
+    func loadMoreHistory() async {
+        guard hasMoreHistory else { return }
+        await loadNextHistoryPage()
+    }
+
+    /// M9 unified home: re-reads `_day.json` for every already-loaded section (called where
+    /// `refreshTodaySummary()` used to be — a finalize, delete, or scenePhase-active event),
+    /// and prepends today's section if it now has content and isn't already loaded (a day
+    /// with no folder yet at launch never entered the initial page).
+    func refreshLoadedHistory() async {
+        var refreshed: [HistorySection] = []
+        for section in historySections {
+            guard let index = await loadDayIndex(dayDirectory: section.dayDirectory) else { continue }
+            refreshed.append(HistorySection(
+                id: section.id, date: section.date, dayDirectory: section.dayDirectory, index: index))
         }
-        todaySummary = TodaySummary(
-            count: index.segments.count,
-            totalMinutes: index.segments.reduce(0) { $0 + $1.duration } / 60)
+        historySections = refreshed
+
+        let todayName = Self.dayFolderFormatter.string(from: Date())
+        guard !historySections.contains(where: { $0.id == todayName }) else { return }
+        if let today = await historySection(forDayName: todayName) {
+            historySections.insert(today, at: 0)
+        }
+    }
+
+    /// Drains `pendingHistoryDirectoryNames` from the front until either 7 content-days have
+    /// been collected or the pending list is exhausted — empty/gap-less day folders are
+    /// consumed from the list but contribute no section (SPEC: paging counts CONTENT days).
+    private func loadNextHistoryPage() async {
+        var page: [HistorySection] = []
+        while !pendingHistoryDirectoryNames.isEmpty, page.count < 7 {
+            let name = pendingHistoryDirectoryNames.removeFirst()
+            if let section = await historySection(forDayName: name) {
+                page.append(section)
+            }
+        }
+        historySections.append(contentsOf: page)
+        hasMoreHistory = !pendingHistoryDirectoryNames.isEmpty
+    }
+
+    /// Builds a `HistorySection` for the day folder named `name` (e.g. "2026-03-14"), or nil
+    /// when the name doesn't parse or the day has no segments/gaps (SPEC: paging skips
+    /// content-less days).
+    private func historySection(forDayName name: String) async -> HistorySection? {
+        guard let date = Self.dayFolderFormatter.date(from: name) else { return nil }
+        let dir = segmentRoot.appendingPathComponent(name, isDirectory: true)
+        guard let index = await loadDayIndex(dayDirectory: dir),
+              !index.segments.isEmpty || !index.gaps.isEmpty
+        else { return nil }
+        return HistorySection(id: name, date: date, dayDirectory: dir, index: index)
+    }
+
+    /// Day folder names directly under `segmentRoot` matching `yyyy-MM-dd`, sorted newest
+    /// first (a plain string sort is date-order-equivalent for this fixed-width format).
+    private func sortedHistoryDirectoryNames() -> [String] {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: segmentRoot.path)
+        else { return [] }
+        return names.filter { $0.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil }
+            .sorted(by: >)
     }
 
     /// M6b Main screen: lets the user clear the crash-recovery banner without waiting for
@@ -138,8 +209,14 @@ final class AppModel {
     /// folder itself exists (SPEC: the index is rebuildable). A day with no folder at all
     /// (never recorded) returns nil rather than fabricating an empty index.
     func loadDayIndex(for date: Date) async -> DayIndex? {
+        await loadDayIndex(dayDirectory: dayDirectory(for: date))
+    }
+
+    /// M9: the paging-friendly variant of `loadDayIndex(for:)` that `loadDayIndex(for:)` now
+    /// calls — takes a day folder directly rather than deriving one from a `Date`, since
+    /// history paging enumerates folder names first and only parses a `Date` afterward.
+    private func loadDayIndex(dayDirectory dir: URL) async -> DayIndex? {
         guard let dayIndex else { return nil }
-        let dir = dayDirectory(for: date)
         if let existing = await dayIndex.index(forDay: dir) { return existing }
         guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
         return await dayIndex.rebuildAndPersist(dayDirectory: dir)
@@ -159,14 +236,15 @@ final class AppModel {
     /// Row deletion (List swipe / Detail button). Both files are removed best-effort — a
     /// partial state (e.g. the .m4a already gone under `deleteAfterTranscription` retention,
     /// leaving only the .md) must not block the rest of the cleanup — then the queue/index
-    /// entries are dropped, then the summary re-derives from the now-updated index.
+    /// entries are dropped, then the loaded history re-derives from the now-updated index.
     func deleteSegment(m4aURL: URL) async {
         let mdURL = m4aURL.deletingPathExtension().appendingPathExtension("md")
         try? FileManager.default.removeItem(at: m4aURL)
         try? FileManager.default.removeItem(at: mdURL)
         await queue?.removeJob(m4aURL: m4aURL)
         await dayIndex?.removeSegment(m4aURL: m4aURL)
-        await refreshTodaySummary()
+        PreviewCache.shared.invalidate(mdURL: mdURL)
+        await refreshLoadedHistory()
     }
 
     /// M6b Settings "Storage" section: walks `segmentRoot` summing audio (.m4a/.caf) bytes
@@ -242,9 +320,12 @@ final class AppModel {
             return
         }
 
-        let store = SegmentStore()
+        // Test seam: when set, `segmentRootOverride` roots BOTH the store and the DayIndexStore
+        // on a synthetic directory tree, so history paging and rebuilds never touch the real
+        // Documents/Sotto folder.
+        let store = SegmentStore(rootDirectory: segmentRootOverride)
         self.segmentRoot = store.rootDirectory
-        let dayIndexStore = DayIndexStore()
+        let dayIndexStore = DayIndexStore(rootDirectory: segmentRootOverride)
         self.dayIndex = dayIndexStore
         let heartbeat = HeartbeatStore()
         // Copied to a local (Sendable struct) rather than captured as `self.settings` inside

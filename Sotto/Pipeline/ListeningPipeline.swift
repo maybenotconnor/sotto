@@ -38,6 +38,9 @@ final class ListeningPipeline {
     /// successful `start()`; survives interruption/resume (the session hasn't ended, just
     /// paused) and only clears back to nil when the session actually stops.
     private(set) var sessionStartedAt: Date?
+    /// M9: mirrors the recorder's currently-open-segment start date (unified home's live
+    /// "Recording…" row timer) — set from `apply()`.
+    private(set) var currentSegmentStartDate: Date?
 
     private let source: any AudioSource
     private let recorder: any SegmentRecording
@@ -289,6 +292,7 @@ final class ListeningPipeline {
         }
         finalizedCount = snapshot.finalizedCount
         diskGuardActive = snapshot.diskGuardActive
+        currentSegmentStartDate = snapshot.currentSegmentStartDate
         if let event = snapshot.lastEvent {
             log(event)
         }

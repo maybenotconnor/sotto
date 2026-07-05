@@ -18,6 +18,10 @@ struct RecorderSnapshot: Sendable, Equatable {
     /// "low disk space" banner instead of pattern-matching `lastEvent` strings. Defaulted so
     /// existing `RecorderSnapshot(state:finalizedCount:lastEvent:)` call sites keep compiling.
     var diskGuardActive: Bool = false
+    /// M9: the currently-open segment's start date, non-nil exactly while a segment is
+    /// recording/silence-pending-finalize (drives the unified home's live "Recording…" row
+    /// timer). Defaulted so existing explicit `RecorderSnapshot(...)` call sites keep compiling.
+    var currentSegmentStartDate: Date? = nil
 }
 
 struct RecorderConfig: Sendable {

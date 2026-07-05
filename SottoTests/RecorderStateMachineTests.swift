@@ -174,6 +174,20 @@ struct RecorderStateMachineTests {
         #expect(last.state == .listening)
     }
 
+    @Test func currentSegmentStartDateTracksSegmentLifecycle() async throws {
+        var config = RecorderConfig()
+        config.silenceTimeout = 0.5
+        config.minSegmentSpeechDuration = 0
+        let (machine, _) = makeMachine(
+            script: [0: .speechStart(time: nil), 1: .speechEnd(time: nil)], config: config)
+        var snap = await machine.beginListening()
+        #expect(snap.currentSegmentStartDate == nil)
+        snap = await machine.process(chunk())          // speechStart → segment opens
+        #expect(snap.currentSegmentStartDate != nil)
+        for _ in 0..<5 { snap = await machine.process(chunk()) }   // silence timeout → finalize
+        #expect(snap.currentSegmentStartDate == nil)
+    }
+
     @Test func markInterruptedFinalizesAndParksState() async throws {
         var config = RecorderConfig()
         config.minSegmentSpeechDuration = 0

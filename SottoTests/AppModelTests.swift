@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Sotto
 
@@ -56,5 +57,38 @@ struct AppModelTests {
         await model.downloadSpeechModel()
         #expect(model.assetState == .unsupported)
         #expect(await installer.installCalls == 0)
+    }
+
+    @Test func historyPagesSevenContentDaysNewestFirst() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HistTests-\(UUID().uuidString)")
+        // 10 content days + 1 empty day folder:
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let store = DayIndexStore(rootDirectory: root)
+        for offset in 0..<10 {
+            let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date())!
+            let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            await store.recordQueuedSegment(
+                m4aURL: dir.appendingPathComponent("10-00-00.m4a"), startTime: day, duration: 60)
+        }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("2001-01-01"), withIntermediateDirectories: true)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()
+
+        #expect(model.historySections.count == 7)
+        #expect(model.hasMoreHistory)
+        #expect(model.historySections.first!.id > model.historySections.last!.id)  // newest first
+
+        await model.loadMoreHistory()
+        #expect(model.historySections.count == 10)      // empty 2001 folder contributes nothing
+        #expect(!model.hasMoreHistory)
     }
 }
