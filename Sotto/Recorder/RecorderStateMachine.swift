@@ -155,6 +155,8 @@ actor RecorderStateMachine: SegmentRecording {
             diskGuardActive = false
         } catch {
             writer = nil
+            // no writer ⇒ no open segment; a stale date would pin a phantom live row
+            segmentStartDate = nil
             lastEvent = "Could not start segment: \(error)"
         }
     }

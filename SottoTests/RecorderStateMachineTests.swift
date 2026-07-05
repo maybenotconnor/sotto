@@ -188,6 +188,30 @@ struct RecorderStateMachineTests {
         #expect(snap.currentSegmentStartDate == nil)
     }
 
+    @Test func failedSegmentOpenClearsSegmentStartDate() async throws {
+        final class ExplodingWriter: SegmentWriting {
+            struct Boom: Error {}
+            let cafURL = URL(fileURLWithPath: "/tmp/x.caf")
+            let m4aURL = URL(fileURLWithPath: "/tmp/x.m4a")
+            private(set) var writtenSampleCount = 0
+            func append(_ samples: [Float]) throws { throw Boom() }
+            func close() {}
+            func discard() {}
+        }
+        final class ExplodingFactory: SegmentWriterFactory, @unchecked Sendable {
+            func makeWriter(startDate: Date) throws -> any SegmentWriting { ExplodingWriter() }
+        }
+        let store = SegmentStore(rootDirectory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("ExplodeTests-\(UUID().uuidString)"))
+        let machine = RecorderStateMachine(
+            detector: FakeSpeechDetector(script: [0: .speechStart(time: nil)]),
+            writerFactory: ExplodingFactory(), store: store, config: RecorderConfig())
+        _ = await machine.beginListening()
+        let snap = await machine.process(chunk())   // speechStart → open fails on flush append
+        #expect(snap.currentSegmentStartDate == nil)   // no phantom live row
+        #expect(snap.state == .listening)              // stayed listening (existing behavior)
+    }
+
     @Test func markInterruptedFinalizesAndParksState() async throws {
         var config = RecorderConfig()
         config.minSegmentSpeechDuration = 0

@@ -115,7 +115,7 @@ private struct HomeScreen: View {
                         .onAppear { Task { await model.loadMoreHistory() } }
                 }
                 .listRowSeparator(.hidden)
-            } else if model.historySections.isEmpty {
+            } else if model.historySections.isEmpty && model.hasLoadedHistoryOnce {
                 Section {
                     Text(pipeline.status != .idle
                         ? "Nothing recorded yet — Sotto is listening."
@@ -137,10 +137,10 @@ private struct HomeScreen: View {
             Button("Delete", role: .destructive) {
                 if let pendingDelete {
                     Task {
+                        // deleteSegment already refreshes loaded history internally.
                         await model.deleteSegment(
                             m4aURL: pendingDelete.section.dayDirectory
                                 .appendingPathComponent("\(pendingDelete.entry.id).m4a"))
-                        await model.refreshLoadedHistory()
                     }
                 }
             }

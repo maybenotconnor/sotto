@@ -49,6 +49,10 @@ final class AppModel {
     /// True while unvisited day directories remain under `segmentRoot` (paging isn't
     /// exhausted yet).
     private(set) var hasMoreHistory = false
+    /// Flips true once `loadInitialHistory()` has completed its first pass. Gates the
+    /// "nothing recorded yet" empty state so a quiet, spinner-less launch (or a
+    /// pull-to-refresh) never flashes that copy while the first real page is still loading.
+    private(set) var hasLoadedHistoryOnce = false
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
@@ -131,13 +135,17 @@ final class AppModel {
     }
 
     /// M9 unified home: resets paging and loads the first 7-content-day page, newest first.
+    /// Builds the new page into a local and swaps `historySections` only once it's ready —
+    /// clearing it up front (the old behavior) blanked the list for the duration of the
+    /// load, flashing the empty state on every relaunch and pull-to-refresh.
     func loadInitialHistory() async {
         let previous = historyTask
         let task = Task {
             await previous?.value
-            historySections = []
             pendingHistoryDirectoryNames = sortedHistoryDirectoryNames()
-            await loadNextHistoryPage()
+            let page = await nextHistoryPage()
+            historySections = page
+            hasLoadedHistoryOnce = true
         }
         historyTask = task
         await task.value
@@ -150,7 +158,8 @@ final class AppModel {
         let task = Task {
             await previous?.value
             guard hasMoreHistory else { return }
-            await loadNextHistoryPage()
+            let page = await nextHistoryPage()
+            historySections.append(contentsOf: page)
         }
         historyTask = task
         await task.value
@@ -160,13 +169,22 @@ final class AppModel {
     /// `refreshTodaySummary()` used to be — a finalize, delete, or scenePhase-active event),
     /// and prepends today's section if it now has content and isn't already loaded (a day
     /// with no folder yet at launch never entered the initial page).
+    ///
+    /// Only today is prepended; a non-loaded OLDER day gaining content retroactively
+    /// (midnight-spanning finalize, rare) surfaces on the next pull-to-refresh or relaunch —
+    /// accepted.
     func refreshLoadedHistory() async {
         let previous = historyTask
         let task = Task {
             await previous?.value
             var refreshed: [HistorySection] = []
             for section in historySections {
-                guard let index = await loadDayIndex(dayDirectory: section.dayDirectory) else { continue }
+                // Content-filtered like `historySection(forDayName:)`: a day whose last
+                // segment was just deleted must drop out here too, or its now-empty sticky
+                // header keeps showing until the next full reload.
+                guard let index = await loadDayIndex(dayDirectory: section.dayDirectory),
+                      !index.segments.isEmpty || !index.gaps.isEmpty
+                else { continue }
                 refreshed.append(HistorySection(
                     id: section.id, date: section.date, dayDirectory: section.dayDirectory, index: index))
             }
@@ -185,7 +203,9 @@ final class AppModel {
     /// Drains `pendingHistoryDirectoryNames` from the front until either 7 content-days have
     /// been collected or the pending list is exhausted — empty/gap-less day folders are
     /// consumed from the list but contribute no section (SPEC: paging counts CONTENT days).
-    private func loadNextHistoryPage() async {
+    /// Returns the page rather than mutating `historySections` itself — callers differ on
+    /// whether the page replaces (initial load) or appends to (load-more) the current list.
+    private func nextHistoryPage() async -> [HistorySection] {
         var page: [HistorySection] = []
         while !pendingHistoryDirectoryNames.isEmpty, page.count < 7 {
             let name = pendingHistoryDirectoryNames.removeFirst()
@@ -193,8 +213,8 @@ final class AppModel {
                 page.append(section)
             }
         }
-        historySections.append(contentsOf: page)
         hasMoreHistory = !pendingHistoryDirectoryNames.isEmpty
+        return page
     }
 
     /// Builds a `HistorySection` for the day folder named `name` (e.g. "2026-03-14"), or nil

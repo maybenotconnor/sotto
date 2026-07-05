@@ -91,4 +91,39 @@ struct AppModelTests {
         #expect(model.historySections.count == 10)      // empty 2001 folder contributes nothing
         #expect(!model.hasMoreHistory)
     }
+
+    /// M9 review Important #2: deleting a day's only segment must drop that day's section
+    /// entirely on the resulting `refreshLoadedHistory()` — otherwise its now-content-less
+    /// sticky header keeps showing until the next full reload.
+    @Test func deletingDaysLastSegmentDropsEmptySection() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DeleteTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        // Yesterday (not "today") so this test exercises only the content-filter fix, not
+        // refreshLoadedHistory's separate "prepend today" logic.
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let m4aURL = dir.appendingPathComponent("09-15-30.m4a")
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        try Data([0x01]).write(to: m4aURL)
+        try "placeholder".write(to: mdURL, atomically: true, encoding: .utf8)
+
+        let indexStore = DayIndexStore(rootDirectory: root)
+        await indexStore.recordQueuedSegment(m4aURL: m4aURL, startTime: day, duration: 12)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()
+        #expect(model.historySections.count == 1)
+
+        await model.deleteSegment(m4aURL: m4aURL)   // removes the day's only segment
+
+        #expect(model.historySections.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: m4aURL.path))
+    }
 }
