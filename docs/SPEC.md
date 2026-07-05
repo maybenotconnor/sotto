@@ -468,6 +468,9 @@ _(Engineering-relevant summary; not legal advice.)_
 
 Design language: stock SwiftUI, system colors/typography (supports the "transparency tool" review posture). Every screen must render sensibly in Dark Mode and at accessibility text sizes. No third-party UI dependencies.
 
+> [!NOTE]
+> **Sections 1–2 superseded 2026-07-05 (user redesign): one unified home screen.** Compact status header (dot + label + elapsed + Start/Stop) with the full-weight notice banners beneath it — the header scrolls away with the list; always-visible recording indication is carried by the system orange mic indicator and the Live Activity. Below: a live "Recording…" row while a segment is open, then infinite-scroll history with sticky day headers (Today/Yesterday/date), newest first — no per-day pagination. All list-row capabilities (spinner/failed-retry/gap markers/swipe-delete/share/detail navigation) unchanged.
+
 ### 1. Main screen
 
 - **Purpose:** one glance = current state; one tap = start/stop.

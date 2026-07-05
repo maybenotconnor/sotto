@@ -2,7 +2,8 @@ import AVFAudio
 import SwiftUI
 import UIKit
 
-/// SPEC "Main screen": one glance = current state; one tap = start/stop.
+/// M9 unified home screen: one glance = current state; one tap = start/stop; scroll down for
+/// history (SPEC "UI specification" note, superseding the old Main + List screens).
 struct ContentView: View {
     let model: AppModel
     @State private var micDenied = false
@@ -29,7 +30,7 @@ struct ContentView: View {
                                 systemImage: "exclamationmark.triangle",
                                 description: Text(setupError))
                         } else if let pipeline = model.pipeline {
-                            MainScreen(model: model, pipeline: pipeline, micDenied: micDenied)
+                            HomeScreen(model: model, pipeline: pipeline, micDenied: micDenied)
                         } else {
                             ProgressView("Preparing…")
                         }
@@ -63,31 +64,117 @@ struct ContentView: View {
     }
 }
 
-private struct MainScreen: View {
+/// M9 unified home: compact status card + full-weight banners (scrolling away with the
+/// list — the always-visible recording indication is carried by the system orange mic dot
+/// and the Live Activity, not by this header), a live "Recording…" row while a segment is
+/// open, then infinite-scroll history with sticky day headers, newest first.
+private struct HomeScreen: View {
     let model: AppModel
     let pipeline: ListeningPipeline
     let micDenied: Bool
 
-    private var isActive: Bool { pipeline.status != .idle }
+    /// Delete-confirmation state: a plain `(DaySegmentEntry, AppModel.HistorySection)?`
+    /// tuple works for the dialog's `isPresented` `!= nil` check, but a small struct reads
+    /// better at the two use sites below (`pendingDelete.entry` / `.section` instead of
+    /// `.0` / `.1`) — implementer's choice per the task brief.
+    private struct PendingDelete {
+        let entry: DaySegmentEntry
+        let section: AppModel.HistorySection
+    }
+    @State private var pendingDelete: PendingDelete?
 
     var body: some View {
-        VStack(spacing: 20) {
-            banners
-            StateDial(status: pipeline.status)
-            Text(stateLabel)
-                .font(.title.bold())
-                .foregroundStyle(stateColor)
-            if let started = pipeline.sessionStartedAt {
-                Text(started, style: .timer)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        List {
+            // Header section — scrolls away with the list (user decision; the system orange
+            // mic dot + Live Activity carry the always-visible recording indication).
+            Section {
+                statusCard
+                banners   // moved from the old MainScreen at FULL weight: same copy, same
+                          // action buttons (Download model / Try again / Open Settings /
+                          // Dismiss), stacked when several apply (user decision: don't
+                          // over-compress).
+            }
+            .listRowSeparator(.hidden)
+
+            if let started = pipeline.currentSegmentStartDate {
+                Section { LiveRecordingRow(startedAt: started) }
             }
 
-            startStopButton
+            ForEach(model.historySections) { section in
+                Section(header: Text(dayTitle(for: section))) {
+                    ForEach(HomeRow.rows(for: section.index)) { row in
+                        rowView(row, in: section)
+                    }
+                }
+            }
 
-            Spacer(minLength: 0)
+            if model.hasMoreHistory {
+                Section {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .onAppear { Task { await model.loadMoreHistory() } }
+                }
+                .listRowSeparator(.hidden)
+            } else if model.historySections.isEmpty {
+                Section {
+                    Text(pipeline.status != .idle
+                        ? "Nothing recorded yet — Sotto is listening."
+                        : "Start listening to capture your first conversation.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+                .listRowSeparator(.hidden)
+            }
         }
-        .padding(.top, 12)
+        .listStyle(.plain)
+        .refreshable { await model.loadInitialHistory() }
+        .task { await model.loadInitialHistory() }
+        .task(id: pipeline.finalizedCount) { await model.refreshLoadedHistory() }
+        .confirmationDialog(
+            "Delete this conversation?", isPresented: .init(
+                get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                if let pendingDelete {
+                    Task {
+                        await model.deleteSegment(
+                            m4aURL: pendingDelete.section.dayDirectory
+                                .appendingPathComponent("\(pendingDelete.entry.id).m4a"))
+                        await model.refreshLoadedHistory()
+                    }
+                }
+            }
+        } message: {
+            Text("Deletes the audio and transcript permanently.")
+        }
+    }
+
+    private var statusCard: some View {
+        HStack(spacing: 12) {
+            Circle().fill(statusColor).frame(width: 12, height: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(statusLabel).font(.headline)
+                if pipeline.status != .idle, let started = pipeline.sessionStartedAt {
+                    Text(started, style: .timer)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button(buttonLabel) {
+                Task {
+                    switch pipeline.status {
+                    case .idle: await pipeline.start()
+                    case .interrupted: await pipeline.resumeFromInterruption()
+                    default: await pipeline.stop()
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(pipeline.status == .idle ? .accentColor : .red)
+            .disabled(micDenied && (pipeline.status == .idle || pipeline.status == .interrupted))
+        }
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -143,27 +230,6 @@ private struct MainScreen: View {
         }
     }
 
-    private var startStopButton: some View {
-        Button {
-            Task {
-                switch pipeline.status {
-                case .idle: await pipeline.start()
-                case .interrupted: await pipeline.resumeFromInterruption()
-                default: await pipeline.stop()
-                }
-            }
-        } label: {
-            Text(buttonLabel)
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(isActive ? .red : .accentColor)
-        .padding(.horizontal, 40)
-        .disabled(micDenied && (pipeline.status == .idle || pipeline.status == .interrupted))
-    }
-
     private var buttonLabel: String {
         switch pipeline.status {
         case .idle: "Start Listening"
@@ -172,7 +238,7 @@ private struct MainScreen: View {
         }
     }
 
-    private var stateLabel: String {
+    private var statusLabel: String {
         switch pipeline.status {
         case .idle: "Idle"
         case .starting: "Starting…"
@@ -183,7 +249,7 @@ private struct MainScreen: View {
         }
     }
 
-    private var stateColor: Color {
+    private var statusColor: Color {
         switch pipeline.status {
         case .idle: .secondary
         case .starting: .secondary
@@ -192,44 +258,34 @@ private struct MainScreen: View {
         case .interrupted: .orange
         }
     }
-}
 
-/// The spec's "large state dial": a pulsing ring while listening, solid otherwise.
-private struct StateDial: View {
-    let status: ListeningPipeline.Status
-    @State private var pulsing = false
-
-    private var color: Color {
-        switch status {
-        case .idle, .starting: .secondary.opacity(0.4)
-        case .listening, .silence: .green
-        case .recording: .red
-        case .interrupted: .orange
-        }
+    private func dayTitle(for section: AppModel.HistorySection) -> String {
+        if Calendar.current.isDateInToday(section.date) { return "Today" }
+        if Calendar.current.isDateInYesterday(section.date) { return "Yesterday" }
+        return section.date.formatted(.dateTime.month(.wide).day())
     }
 
-    private var isLive: Bool {
-        switch status {
-        case .listening, .recording, .silence: true
-        default: false
+    @ViewBuilder
+    private func rowView(_ row: HomeRow, in section: AppModel.HistorySection) -> some View {
+        switch row {
+        case .gap(_, let gap):
+            GapRowView(gap: gap)
+        case .segment(let entry):
+            NavigationLink {
+                ConversationDetailView(
+                    model: model, entry: entry, dayDirectory: section.dayDirectory)
+            } label: {
+                SegmentRowView(entry: entry, dayDirectory: section.dayDirectory, model: model)
+            }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) { pendingDelete = PendingDelete(entry: entry, section: section) } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                ShareLink(item: section.dayDirectory.appendingPathComponent("\(entry.id).md")) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
         }
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color, lineWidth: 6)
-                .frame(width: 140, height: 140)
-                .scaleEffect(pulsing && isLive ? 1.06 : 1.0)
-                .animation(
-                    isLive ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default,
-                    value: pulsing && isLive)
-            Image(systemName: status == .recording ? "waveform" : "mic")
-                .font(.system(size: 44))
-                .foregroundStyle(color)
-        }
-        .onAppear { pulsing = true }
-        .accessibilityHidden(true)
     }
 }
 

@@ -66,6 +66,13 @@ final class AppModel {
     /// Directory names (newest first) not yet consumed by history paging — populated fresh by
     /// `loadInitialHistory()`, drained 7-content-days-at-a-time by `loadNextHistoryPage()`.
     private var pendingHistoryDirectoryNames: [String] = []
+    /// M9 unified home: chains `loadInitialHistory`/`loadMoreHistory`/`refreshLoadedHistory`
+    /// against each other. `HomeScreen` fires `loadInitialHistory()` (a plain `.task`) and
+    /// `refreshLoadedHistory()` (a `.task(id: pipeline.finalizedCount)`, which also runs on
+    /// first appearance) concurrently at mount — without this chain their `await` points
+    /// interleave and each can independently decide "today" isn't loaded yet and append its
+    /// own copy, duplicating the section (caught via e2e screenshot review).
+    private var historyTask: Task<Void, Never>?
 
     /// Pinned "yyyy-MM-dd" formatter (POSIX locale, Gregorian calendar) shared by history
     /// paging and `dayDirectory(for:)` — folder names must not drift with the user's
@@ -125,16 +132,28 @@ final class AppModel {
 
     /// M9 unified home: resets paging and loads the first 7-content-day page, newest first.
     func loadInitialHistory() async {
-        historySections = []
-        pendingHistoryDirectoryNames = sortedHistoryDirectoryNames()
-        await loadNextHistoryPage()
+        let previous = historyTask
+        let task = Task {
+            await previous?.value
+            historySections = []
+            pendingHistoryDirectoryNames = sortedHistoryDirectoryNames()
+            await loadNextHistoryPage()
+        }
+        historyTask = task
+        await task.value
     }
 
     /// M9 unified home: appends the next 7-content-day page — a no-op once paging is
     /// exhausted (`hasMoreHistory == false`).
     func loadMoreHistory() async {
-        guard hasMoreHistory else { return }
-        await loadNextHistoryPage()
+        let previous = historyTask
+        let task = Task {
+            await previous?.value
+            guard hasMoreHistory else { return }
+            await loadNextHistoryPage()
+        }
+        historyTask = task
+        await task.value
     }
 
     /// M9 unified home: re-reads `_day.json` for every already-loaded section (called where
@@ -142,19 +161,25 @@ final class AppModel {
     /// and prepends today's section if it now has content and isn't already loaded (a day
     /// with no folder yet at launch never entered the initial page).
     func refreshLoadedHistory() async {
-        var refreshed: [HistorySection] = []
-        for section in historySections {
-            guard let index = await loadDayIndex(dayDirectory: section.dayDirectory) else { continue }
-            refreshed.append(HistorySection(
-                id: section.id, date: section.date, dayDirectory: section.dayDirectory, index: index))
-        }
-        historySections = refreshed
+        let previous = historyTask
+        let task = Task {
+            await previous?.value
+            var refreshed: [HistorySection] = []
+            for section in historySections {
+                guard let index = await loadDayIndex(dayDirectory: section.dayDirectory) else { continue }
+                refreshed.append(HistorySection(
+                    id: section.id, date: section.date, dayDirectory: section.dayDirectory, index: index))
+            }
+            historySections = refreshed
 
-        let todayName = Self.dayFolderFormatter.string(from: Date())
-        guard !historySections.contains(where: { $0.id == todayName }) else { return }
-        if let today = await historySection(forDayName: todayName) {
-            historySections.insert(today, at: 0)
+            let todayName = Self.dayFolderFormatter.string(from: Date())
+            guard !historySections.contains(where: { $0.id == todayName }) else { return }
+            if let today = await historySection(forDayName: todayName) {
+                historySections.insert(today, at: 0)
+            }
         }
+        historyTask = task
+        await task.value
     }
 
     /// Drains `pendingHistoryDirectoryNames` from the front until either 7 content-days have
