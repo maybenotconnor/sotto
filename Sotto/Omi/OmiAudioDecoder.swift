@@ -36,6 +36,9 @@ struct OmiAudioDecoder: Sendable {
             guard let pcm16 = try? codec.decode(data: data) else {
                 return silence(frames: 1)
             }
+            guard pcm16.count % MemoryLayout<Int16>.size == 0 else {
+                return silence(frames: 1)
+            }
             return pcm16.withUnsafeBytes { raw in
                 raw.bindMemory(to: Int16.self).map { Float(Int16(littleEndian: $0)) / 32_768.0 }
             }

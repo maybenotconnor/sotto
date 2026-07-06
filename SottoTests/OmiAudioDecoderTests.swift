@@ -43,4 +43,11 @@ struct OmiAudioDecoderTests {
         #expect(floats.count == OmiConstants.samplesPerFrame)
         #expect(floats.allSatisfy { $0 == 0 })
     }
+
+    @Test func oddLengthPcm16FrameBecomesSilenceNotTruncation() throws {
+        let decoder = try OmiAudioDecoder(codecValue: OmiConstants.codecPCM16at16kHz)
+        let floats = decoder.decode(.frame(Data([0x00, 0x40, 0x99])))   // 3 bytes: not sample-aligned
+        #expect(floats.count == OmiConstants.samplesPerFrame)
+        #expect(floats.allSatisfy { $0 == 0 })
+    }
 }
