@@ -31,6 +31,35 @@ final class AppModel {
         var index: DayIndex
     }
 
+    /// Merge-conversations selection gating (spec 2026-07-06). Selection keys are
+    /// "<sectionID>/<entryID>" — entry ids (HH-mm-ss) are only unique within one day, so
+    /// the key carries the day. Stale keys (row deleted mid-selection) are ignored.
+    enum MergeEligibility: Equatable {
+        case eligible(dayDirectory: URL, entries: [DaySegmentEntry])
+        case tooFew
+        case multipleDays
+        case notAllDone
+    }
+
+    nonisolated static func mergeEligibility(
+        selectedKeys: Set<String>, sections: [HistorySection]
+    ) -> MergeEligibility {
+        var picked: [(section: HistorySection, entry: DaySegmentEntry)] = []
+        for section in sections {
+            for entry in section.index.segments
+            where selectedKeys.contains("\(section.id)/\(entry.id)") {
+                picked.append((section, entry))
+            }
+        }
+        guard picked.count >= 2 else { return .tooFew }
+        guard Set(picked.map(\.section.id)).count == 1 else { return .multipleDays }
+        guard picked.allSatisfy({ $0.entry.transcriptionState == "done" }) else {
+            return .notAllDone
+        }
+        let entries = picked.map(\.entry).sorted { ($0.startTime, $0.id) < ($1.startTime, $1.id) }
+        return .eligible(dayDirectory: picked[0].section.dayDirectory, entries: entries)
+    }
+
     /// M6b Settings "Storage" section: on-disk footprint split by kind, walked live rather
     /// than tracked incrementally (this repo's file counts are small; a full walk is cheap
     /// and can never drift from the true on-disk state).

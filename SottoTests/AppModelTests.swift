@@ -126,4 +126,57 @@ struct AppModelTests {
         #expect(model.historySections.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: m4aURL.path))
     }
+
+    private func section(day: String, entries: [(id: String, state: String)]) -> AppModel.HistorySection {
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let dir = URL(fileURLWithPath: "/tmp/EligibilityTests/\(day)")
+        let segments = entries.enumerated().map { offset, entry in
+            DaySegmentEntry(
+                id: entry.id,
+                startTime: dayFormatter.date(from: day)!.addingTimeInterval(Double(offset) * 60),
+                duration: 10, backend: "speechAnalyzer", hasAudio: false, wordCount: 3,
+                transcriptionState: entry.state)
+        }
+        return AppModel.HistorySection(
+            id: day, date: dayFormatter.date(from: day)!, dayDirectory: dir,
+            index: DayIndex(date: day, segments: segments, gaps: []))
+    }
+
+    @Test func mergeEligibilityGatesSelections() {
+        let sections = [
+            section(day: "2026-03-15", entries: [("08-00-00", "done")]),
+            section(day: "2026-03-14", entries: [
+                ("09-15-30", "done"), ("10-01-00", "done"), ("11-00-00", "queued"),
+            ]),
+        ]
+
+        #expect(AppModel.mergeEligibility(
+            selectedKeys: ["2026-03-14/09-15-30"], sections: sections) == .tooFew)
+        #expect(AppModel.mergeEligibility(
+            selectedKeys: ["2026-03-14/09-15-30", "2026-03-15/08-00-00"],
+            sections: sections) == .multipleDays)
+        #expect(AppModel.mergeEligibility(
+            selectedKeys: ["2026-03-14/09-15-30", "2026-03-14/11-00-00"],
+            sections: sections) == .notAllDone)
+
+        let eligibility = AppModel.mergeEligibility(
+            selectedKeys: ["2026-03-14/10-01-00", "2026-03-14/09-15-30"],
+            sections: sections)
+        guard case .eligible(let dayDirectory, let entries) = eligibility else {
+            Issue.record("expected .eligible, got \(eligibility)")
+            return
+        }
+        #expect(dayDirectory.lastPathComponent == "2026-03-14")
+        #expect(entries.map(\.id) == ["09-15-30", "10-01-00"])   // sorted chronologically
+    }
+
+    @Test func mergeEligibilityIgnoresStaleKeys() {
+        let sections = [section(day: "2026-03-14", entries: [("09-15-30", "done")])]
+        #expect(AppModel.mergeEligibility(
+            selectedKeys: ["2026-03-14/09-15-30", "2026-03-14/99-99-99"],
+            sections: sections) == .tooFew)
+    }
 }
