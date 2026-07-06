@@ -433,3 +433,66 @@ actor FakeOmiTransport: OmiTransport {
         emit(.audioNotification(data))
     }
 }
+
+/// Scriptable ConnectableAudioSource stand-in for FailoverAudioSource tests: tests drive
+/// connection state directly, with no real Omi transport involved.
+///
+/// `stop()` mirrors the OmiAudioSource fix (M12 Task 5): it finishes — and clears — every
+/// outstanding `connectionStates()` stream, not just the audio stream. Without that, a stale
+/// continuation from a prior start/stop cycle would still be in `stateContinuations` and
+/// would fan a later `setState()` out to a dead subscriber, double-delivering state changes
+/// after a restart (Task.cancel() alone can't stop a `for await` over AsyncStream — see
+/// OmiAudioSource.stop()'s doc comment).
+actor FakeConnectableAudioSource: ConnectableAudioSource {
+    nonisolated let sourceType: AudioSourceType = .omi
+    nonisolated var isAvailable: Bool { true }
+    private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private var stateContinuations: [UUID: AsyncStream<OmiConnectionState>.Continuation] = [:]
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func start() async throws -> AsyncStream<AudioChunk> {
+        startCount += 1
+        let (stream, c) = AsyncStream.makeStream(of: AudioChunk.self)
+        continuation = c
+        return stream
+    }
+    func stop() {
+        stopCount += 1
+        continuation?.finish(); continuation = nil
+        for c in stateContinuations.values { c.finish() }
+        stateContinuations.removeAll()
+    }
+    func connectionStates() -> AsyncStream<OmiConnectionState> {
+        let id = UUID()
+        let (stream, c) = AsyncStream.makeStream(of: OmiConnectionState.self)
+        stateContinuations[id] = c
+        return stream
+    }
+    // Test drivers
+    func setState(_ s: OmiConnectionState) { for c in stateContinuations.values { c.yield(s) } }
+    func emitChunk(_ chunk: AudioChunk) { continuation?.yield(chunk) }
+}
+
+/// Simple scriptable AudioSource for FailoverAudioSource's phone-mic side: unlike the
+/// existing `FakeAudioSource`, this supports injecting a `start()` failure (needed to
+/// exercise the `.captureUnavailable` path) and exposes plain `startCount`/`stopCount`.
+actor FakeSimpleAudioSource: AudioSource {
+    nonisolated let sourceType: AudioSourceType = .phoneMic
+    nonisolated var isAvailable: Bool { true }
+    private var startError: Error?
+    private var continuation: AsyncStream<AudioChunk>.Continuation?
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func setStartError(_ error: Error?) { startError = error }
+    func start() async throws -> AsyncStream<AudioChunk> {
+        startCount += 1
+        if let startError { throw startError }
+        let (stream, c) = AsyncStream.makeStream(of: AudioChunk.self)
+        continuation = c
+        return stream
+    }
+    func stop() { continuation?.finish(); continuation = nil; stopCount += 1 }
+    func emitChunk(_ chunk: AudioChunk) { continuation?.yield(chunk) }
+}
