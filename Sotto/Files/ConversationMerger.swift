@@ -1,0 +1,183 @@
+import Foundation
+
+/// Merge-conversations (spec 2026-07-06): file-level merge of 2+ same-day conversations
+/// into the earliest part's basename. Owns spec steps 1–4 (stitch → write merged .md →
+/// move audio → delete parts); step 5 (`_day.json`) stays with `DayIndexStore.applyMerge`,
+/// the actor that owns index writes. The merged file uses EXACTLY a recorded file's
+/// frontmatter keys, so rebuild/list/preview/sync treat it as any other conversation.
+enum ConversationMerger {
+    enum MergeError: Error, Equatable {
+        case needAtLeastTwoParts
+        case missingTranscript(String)      // part id whose .md is unreadable
+        case audioStitchFailed(String)
+    }
+
+    struct Outcome: Equatable {
+        let mergedEntry: DaySegmentEntry
+        let removedIDs: [String]            // part ids whose files were deleted
+        let mergedM4AURL: URL               // exists only when mergedEntry.hasAudio
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
+    static func merge(dayDirectory: URL, entries: [DaySegmentEntry]) async throws -> Outcome {
+        guard entries.count >= 2 else { throw MergeError.needAtLeastTwoParts }
+        let parts = entries.sorted { ($0.startTime, $0.id) < ($1.startTime, $1.id) }
+
+        // Parse every part BEFORE touching anything — an abort must leave disk untouched.
+        var files: [TranscriptFile] = []
+        for part in parts {
+            guard let file = TranscriptFile.parse(
+                url: dayDirectory.appendingPathComponent("\(part.id).md"))
+            else { throw MergeError.missingTranscript(part.id) }
+            files.append(file)
+        }
+
+        // Spec step 1 — stitch to a temp file, only when EVERY part still has its .m4a
+        // (any part missing ⇒ transcript-only merge). Stitch failure aborts pre-write.
+        let m4aURLs = parts.map { dayDirectory.appendingPathComponent("\($0.id).m4a") }
+        let allHaveAudio = m4aURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+        var stitchedTempURL: URL?
+        if allHaveAudio {
+            let temp = dayDirectory.appendingPathComponent(".merge-\(parts[0].id).m4a")
+            try? FileManager.default.removeItem(at: temp)
+            do {
+                try await AudioStitcher.stitch(parts: m4aURLs, to: temp)
+                stitchedTempURL = temp
+            } catch {
+                try? FileManager.default.removeItem(at: temp)
+                throw MergeError.audioStitchFailed(String(describing: error))
+            }
+        }
+
+        let fronts = files.map(\.frontmatter)
+        let durationSum = fronts.compactMap { $0["duration"].flatMap(Int.init) }.reduce(0, +)
+        let backends = Set(fronts.compactMap { $0["backend"] })
+        let backend = backends.count == 1 ? backends.first : (backends.isEmpty ? nil : "mixed")
+        let speakers = fronts.compactMap { $0["speakers"].flatMap(Int.init) }.max()
+
+        // Spec step 2 — merged .md atomically over the earliest part's.
+        let mergedMDURL = dayDirectory.appendingPathComponent("\(parts[0].id).md")
+        let markdown = renderMerged(
+            parts: parts, files: files,
+            durationSum: durationSum, backend: backend, speakers: speakers)
+        try markdown.write(to: mergedMDURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: mergedMDURL.path)
+
+        // Spec step 3 — stitched audio over the earliest part's .m4a; transcript-only
+        // merges drop a straggling part-1 .m4a (merged conversation has no audio).
+        let mergedM4AURL = m4aURLs[0]
+        if let stitchedTempURL {
+            _ = try? FileManager.default.replaceItemAt(mergedM4AURL, withItemAt: stitchedTempURL)
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: mergedM4AURL.path)
+        } else {
+            try? FileManager.default.removeItem(at: mergedM4AURL)
+        }
+
+        // Spec step 4 — delete the other parts' files (new truth exists; old goes last).
+        for (part, m4a) in zip(parts, m4aURLs).dropFirst() {
+            try? FileManager.default.removeItem(
+                at: dayDirectory.appendingPathComponent("\(part.id).md"))
+            try? FileManager.default.removeItem(at: m4a)
+        }
+
+        // Parse the just-written file so wordCount comes from the SAME function on the
+        // SAME text the rebuilder would use — rebuild parity by construction.
+        let mergedFile = TranscriptFile.parse(url: mergedMDURL)
+        let mergedEntry = DaySegmentEntry(
+            id: parts[0].id,
+            startTime: parts[0].startTime,
+            duration: Double(durationSum),
+            backend: backend,
+            hasAudio: stitchedTempURL != nil,
+            wordCount: mergedFile.map { DayIndexRebuilder.wordCount(of: $0.transcriptBody) },
+            transcriptionState: "done",
+            title: nil)
+        return Outcome(
+            mergedEntry: mergedEntry,
+            removedIDs: parts.dropFirst().map(\.id),
+            mergedM4AURL: mergedM4AURL)
+    }
+
+    // MARK: - Rendering
+
+    private static func renderMerged(
+        parts: [DaySegmentEntry], files: [TranscriptFile],
+        durationSum: Int, backend: String?, speakers: Int?
+    ) -> String {
+        var lines = ["---"]
+        if let date = files[0].frontmatter["date"] { lines.append("date: \(date)") }
+        lines.append("duration: \(durationSum)")
+        if let speechEnd = files[files.count - 1].frontmatter["speechEnd"] {
+            lines.append("speechEnd: \(speechEnd)")
+        }
+        if let backend { lines.append("backend: \(backend)") }
+        if let speakers { lines.append("speakers: \(speakers)") }
+        lines.append("---")
+        lines.append("")
+        lines.append("# Conversation — \(timeFormatter.string(from: parts[0].startTime))")
+        lines.append("")
+        for index in parts.indices {
+            if index > 0 {
+                lines.append(gapMarker(
+                    previousEntry: parts[index - 1], previousFile: files[index - 1],
+                    nextEntry: parts[index], nextFile: files[index]))
+                lines.append("")
+            }
+            lines.append(partBody(files[index]))
+            lines.append("")
+        }
+        while lines.last == "" { lines.removeLast() }
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    /// A part's transcript with its own H1 heading dropped (`transcriptBody` already
+    /// excludes any per-part Summary section; pre-notes files carry the H1 inside it).
+    private static func partBody(_ file: TranscriptFile) -> String {
+        file.transcriptBody
+            .components(separatedBy: "\n")
+            .filter { !$0.hasPrefix("# ") }        // "# " matches H1 only, never "## "
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func gapMarker(
+        previousEntry: DaySegmentEntry, previousFile: TranscriptFile,
+        nextEntry: DaySegmentEntry, nextFile: TranscriptFile
+    ) -> String {
+        let iso = ISO8601DateFormatter()
+        let previousEnd = previousFile.frontmatter["speechEnd"].flatMap { iso.date(from: $0) }
+            ?? previousEntry.startTime.addingTimeInterval(previousEntry.duration)
+        let gap = max(0, nextEntry.startTime.timeIntervalSince(previousEnd))
+        var marker = "> \(gapText(gap)) gap — resumed "
+            + timeFormatter.string(from: nextEntry.startTime)
+        // Reset note only when BOTH sides carry Deepgram speaker labels — between an
+        // unlabeled part and a labeled one there is no numbering to "restart".
+        if hasSpeakerLabels(previousFile), hasSpeakerLabels(nextFile) {
+            marker += " · speaker numbers restart"
+        }
+        return marker
+    }
+
+    private static func gapText(_ seconds: TimeInterval) -> String {
+        let minutes = max(1, Int((seconds / 60).rounded()))
+        guard minutes >= 60 else { return "\(minutes) min" }
+        let (hours, rest) = minutes.quotientAndRemainder(dividingBy: 60)
+        return rest == 0 ? "\(hours) hr" : "\(hours) hr \(rest) min"
+    }
+
+    private static func hasSpeakerLabels(_ file: TranscriptFile) -> Bool {
+        file.transcriptBody.range(
+            of: #"\*\*Speaker \d+:\*\*"#, options: .regularExpression) != nil
+    }
+}

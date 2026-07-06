@@ -55,7 +55,7 @@ enum DayIndexRebuilder {
     /// Fed `TranscriptFile.transcriptBody` (frontmatter stripped, and the Summary/action-items
     /// section excluded when notes are present — the shared parser above draws that line) —
     /// still strips speaker labels and heading markup, since those aren't "words".
-    private static func wordCount(of body: String) -> Int {
+    static func wordCount(of body: String) -> Int {
         let stripped = body
             .replacingOccurrences(of: #"\*\*Speaker \d+:\*\*"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "#", with: " ")
