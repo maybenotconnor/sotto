@@ -20,7 +20,12 @@ enum AudioStitcher {
         var cursor = CMTime.zero
         for part in parts {
             let asset = AVURLAsset(url: part)
-            let duration = try await asset.load(.duration)
+            let duration: CMTime
+            do {
+                duration = try await asset.load(.duration)
+            } catch {
+                throw StitchError.unreadablePart(part)
+            }
             guard duration > .zero else { throw StitchError.unreadablePart(part) }
             do {
                 try await composition.insertTimeRange(
@@ -34,7 +39,12 @@ enum AudioStitcher {
             try await export(composition, preset: AVAssetExportPresetPassthrough, to: output)
         } catch {
             try? FileManager.default.removeItem(at: output)
-            try await export(composition, preset: AVAssetExportPresetAppleM4A, to: output)
+            do {
+                try await export(composition, preset: AVAssetExportPresetAppleM4A, to: output)
+            } catch {
+                try? FileManager.default.removeItem(at: output)
+                throw error
+            }
         }
     }
 
