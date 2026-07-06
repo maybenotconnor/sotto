@@ -180,6 +180,8 @@ struct SettingsView: View {
                     self.syncFolderName = nil
                     exportAllResult = nil
                 }
+                Text("Deleting a conversation in Sotto doesn't remove copies already in this folder.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Button("Set cloud sync folder…") { showSyncFolderPicker = true }
                 Text("New conversations are copied there after transcription — works with iCloud Drive, Google Drive, OpenCloud, and any Files provider.")
