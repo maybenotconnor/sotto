@@ -41,4 +41,10 @@ protocol SegmentRecording: Sendable {
     func finishAndFinalize() async -> RecorderSnapshot
     /// Interruption semantics (M3 wires callers): finalize what exists, park.
     func markInterrupted() async -> RecorderSnapshot
+    /// Sets the label stamped on subsequently finalized segments. No state transition.
+    func setActiveSource(_ source: AudioSourceType) async
+    /// Source switch: finalize any open segment (same path as the silence-timeout
+    /// finalize), set the new source, and continue in .listening if currently in an
+    /// active state. In .idle/.interrupted this only sets the source.
+    func rollover(to source: AudioSourceType) async -> RecorderSnapshot
 }

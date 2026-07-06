@@ -165,6 +165,10 @@ actor FakeRecorder: SegmentRecording {
     private(set) var finishCount = 0
     private(set) var beginCount = 0
     private(set) var markInterruptedCount = 0
+    private(set) var activeSource: AudioSourceType = .phoneMic
+    private(set) var setActiveSourceCalls: [AudioSourceType] = []
+    // M12 Task 8 reads this to assert failover source switches reach the recorder.
+    private(set) var rolloverCalls: [AudioSourceType] = []
 
     init(stateScript: [Int: RecorderState] = [:]) {
         self.stateScript = stateScript
@@ -195,6 +199,17 @@ actor FakeRecorder: SegmentRecording {
         markInterruptedCount += 1
         finished = true
         return RecorderSnapshot(state: .interrupted, finalizedCount: 0, lastEvent: "Interrupted")
+    }
+
+    func setActiveSource(_ source: AudioSourceType) {
+        setActiveSourceCalls.append(source)
+        activeSource = source
+    }
+
+    func rollover(to source: AudioSourceType) -> RecorderSnapshot {
+        rolloverCalls.append(source)
+        activeSource = source
+        return RecorderSnapshot(state: .listening, finalizedCount: 0, lastEvent: nil)
     }
 }
 

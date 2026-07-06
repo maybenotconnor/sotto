@@ -20,6 +20,9 @@ actor RecorderStateMachine: SegmentRecording {
     private var lastEvent: String?
     private var diskGuardActive = false
     private var segmentHandler: (@Sendable (FinalizedSegment) -> Void)?
+    /// M12: which device is currently feeding chunks — stamped onto every segment
+    /// finalized from here on. `rollover(to:)` is the only way this changes mid-session.
+    private var activeSource: AudioSourceType = .phoneMic
 
     init(
         detector: any SpeechDetecting,
@@ -132,6 +135,35 @@ actor RecorderStateMachine: SegmentRecording {
         return snapshot()
     }
 
+    func setActiveSource(_ source: AudioSourceType) {
+        activeSource = source
+    }
+
+    /// Source switch (M12 Task 8 wires failover callers): finalize any open segment via
+    /// the exact same private path the silence-timeout close uses (min-length guard
+    /// included), then resume in `.listening` — the session continues uninterrupted on
+    /// the new source. The segment finalized here (if any) carries the OLD source;
+    /// segments opened afterward carry the new one. In `.listening`/`.idle`/`.interrupted`
+    /// there's nothing open, so this just relabels the active source with no transition.
+    func rollover(to source: AudioSourceType) -> RecorderSnapshot {
+        switch state {
+        case .recording, .silence:
+            if state == .recording {
+                // Mirror finishAndFinalize/markInterrupted: freeze the speech-duration
+                // watermark at the current write position. Without this, a rollover
+                // mid-speech (no speechEnd yet) would see the stale watermark from the
+                // last speechEnd (or 0) and wrongly discard a long, valid segment.
+                lastSpeechEndSampleCount = writer?.writtenSampleCount ?? 0
+            }
+            finalizeSegment()   // sets state = .listening on success (or no-op if nothing open)
+        case .listening, .idle, .interrupted:
+            break
+        }
+        activeSource = source
+        lastEvent = "Source → \(source.displayName)"
+        return snapshot()
+    }
+
     // MARK: - Segment lifecycle
 
     private func openSegment() {
@@ -205,7 +237,8 @@ actor RecorderStateMachine: SegmentRecording {
             m4aURL: closing.m4aURL,
             startDate: startDate,
             duration: secondsOf(closing.writtenSampleCount),
-            speechDuration: speechDuration)
+            speechDuration: speechDuration,
+            source: activeSource)
         segmentHandler?(segment)
     }
 

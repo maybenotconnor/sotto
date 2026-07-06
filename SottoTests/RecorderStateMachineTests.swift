@@ -227,4 +227,56 @@ struct RecorderStateMachineTests {
         #expect(after.state == .interrupted)
         #expect(factory.writers.count == 1)
     }
+
+    // MARK: - M12 Task 6: active-source stamping + rollover
+
+    @Test func rolloverFinalizesOpenSegmentWithOldSourceAndKeepsListening() async throws {
+        // Two speechStarts: index 0 opens the first (pre-rollover) segment, index 20
+        // opens the second (post-rollover) segment. No speechEnd is ever scripted, so
+        // both segments stay in `.recording` the whole time — this exercises rollover's
+        // reuse of the min-length guard while mid-speech (not just at a silence edge).
+        let (machine, _) = makeMachine(script: [0: .speechStart(time: nil), 20: .speechStart(time: nil)])
+        let captured = Mutex<[FinalizedSegment]>([])
+        await machine.setSegmentHandler { segment in
+            captured.withLock { $0.append(segment) }
+        }
+        await machine.setActiveSource(.omi)
+        _ = await machine.beginListening()
+        // 20 chunks × 4096 samples = 81,920 samples ≈ 5.1 s of "speech" — comfortably
+        // past the default 3 s minSegmentSpeechDuration guard.
+        for _ in 0..<20 { _ = await machine.process(chunk()) }
+
+        let snapshot = await machine.rollover(to: .phoneMic)
+        #expect(snapshot.state == .listening)
+        #expect(captured.withLock { $0 }.count == 1)
+        #expect(captured.withLock { $0 }.last?.source == .omi)
+
+        // Drive another valid segment (now on the new source) and finalize it.
+        for _ in 0..<20 { _ = await machine.process(chunk()) }
+        _ = await machine.finishAndFinalize()
+        #expect(captured.withLock { $0 }.count == 2)
+        #expect(captured.withLock { $0 }.last?.source == .phoneMic)
+    }
+
+    @Test func rolloverWhileListeningJustSwitchesSource() async throws {
+        let (machine, _) = makeMachine(script: [:])
+        let captured = Mutex<[FinalizedSegment]>([])
+        await machine.setSegmentHandler { segment in
+            captured.withLock { $0.append(segment) }
+        }
+        _ = await machine.beginListening()
+
+        let snapshot = await machine.rollover(to: .omi)
+
+        #expect(snapshot.state == .listening)
+        #expect(captured.withLock { $0 }.isEmpty)
+    }
+
+    @Test func rolloverWhileIdleOnlySetsSource() async throws {
+        let (machine, _) = makeMachine(script: [:])
+
+        let snapshot = await machine.rollover(to: .omi)
+
+        #expect(snapshot.state == .idle)
+    }
 }
