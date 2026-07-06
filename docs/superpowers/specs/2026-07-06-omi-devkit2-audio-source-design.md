@@ -24,7 +24,7 @@ This fills the seam the spec designed for on day one: `docs/SPEC.md` §"Audio so
 - **Battery:** standard service `180F`, level char `2A19` (notify on newer firmware; poll on older).
 - **Device info:** standard `180A` (firmware revision `2A26` shown in Settings).
 - **Packet framing:** every notification = `[uint16 LE packet# | uint8 fragment index | payload]`. Packet# is a rolling counter wrapping 0xFFFF→0x0000. A codec frame larger than one notification spans notifications sharing a packet# with incrementing fragment index; reassemble until packet# changes.
-- **Codec values (char 19B10002):** 0 = PCM16/16 kHz, 1 = PCM16/8 kHz, 10 = µ-law/16 kHz, 11 = µ-law/8 kHz, **20 = Opus/16 kHz mono @ 32 kbps** (default on firmware ≥1.0.3). Opus encoder runs `RESTRICTED_LOWDELAY`, complexity 3, **FEC/DTX disabled** — the decoder must invoke packet-loss concealment (null-pointer decode) on detected sequence gaps. Frame size is 10–20 ms (docs and firmware config disagree; Opus TOC is self-describing, so decode handles either — confirm on hardware).
+- **Codec values (char 19B10002):** 0 = PCM16/16 kHz, 1 = PCM16/8 kHz, 10 = µ-law/16 kHz, 11 = µ-law/8 kHz, **20 = Opus/16 kHz mono @ 32 kbps** (default on firmware ≥1.0.3). Opus encoder runs `RESTRICTED_LOWDELAY`, complexity 3, **FEC/DTX disabled** — dropped packets need concealment on the decode side. *Planning amendment (2026-07-06):* M12 fills gaps with silence (320 zero samples per missing packet) — swift-opus does not expose libopus's null-pointer PLC decode; true PLC is a post-hardware-verification polish item, triggered only if the hardware listening test hears clicks. The 8 kHz variants (values 1, 11) are rejected as unsupported rather than resampled — the pipeline is 16 kHz end-to-end and firmware ≥1.0.3 never sends them. Frame size is 10–20 ms (docs and firmware config disagree; Opus TOC is self-describing, so decode handles either — confirm on hardware).
 - **iOS constraints:** CoreBluetooth negotiates MTU and connection interval itself (firmware's 498-byte / 7.5 ms preferences are not obtainable); payload per notification = MTU − 3.
 - **License:** entire repo MIT ("Based Hardware Contributors"); swift-opus/libopus BSD-3. Vendoring is fine with attribution headers.
 - **Opus on Apple platforms:** no system support (AVAudioConverter cannot decode Opus). Use `nelcea/swift-opus` (what omi-lib uses; pin the revision omi pins for parity).
@@ -103,15 +103,16 @@ ListeningPipeline → VAD → RecorderStateMachine → writer → … (unchanged
 - `FinalizedSegment` and `DayIndexEntry` gain `source: AudioSourceType` (decoded default `.phoneMic` so existing `_day.json` files and old `.md` frontmatter remain valid).
 - Markdown frontmatter gains `source: omi|phoneMic`; `DayIndexRebuilder` reads it back.
 - Conversation detail view shows the source. No filtering UI (YAGNI).
+- Salvaged CAFs (crash recovery) are labeled `.phoneMic` — the source is unknowable after a crash. Documented limitation.
 - No new gap semantics: source switches split segments but coverage continues; `gaps[]` remains for genuine coverage loss.
 
 ## Error handling
 
 | Failure | Handling |
 |---|---|
-| Unknown codec value | Typed error; no stream; Settings shows "unsupported firmware codec" with the value |
-| Sequence gap | Assembler reports gap count → decoder runs PLC per missing frame; dropout counter exposed on the source snapshot for diagnostics |
-| Opus decode error | Skip frame, log; N consecutive failures → treat as transport fault → disconnect/reconnect cycle |
+| Unknown or 8 kHz codec value | Typed error; no stream; Settings shows "unsupported firmware codec" with the value |
+| Sequence gap | Assembler reports gap count → decoder emits silence fill per missing frame (PLC deferred — see planning amendment above) |
+| Opus decode error | Undecodable frame → one frame of silence; never a crash or stalled stream |
 | BLE disconnect | Failover state machine (above) |
 | Bluetooth off / unauthorized | Banner + phone-mic capture; Omi treated as disconnected |
 | Phone mic fails during fallback | `unavailable` state → loud notification |
