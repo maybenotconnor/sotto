@@ -12,6 +12,9 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
     exactVersion: 0.15.4
+  SwiftOpus:
+    url: https://github.com/nelcea/swift-opus
+    exactVersion: 1.0.0
 targets:
   Sotto:
     type: application
@@ -25,13 +28,16 @@ targets:
         buildPhase: resources
     dependencies:
       - package: FluidAudio
+      - package: SwiftOpus
+        product: Opus
       - target: SottoWidgets
         embed: true
     info:
       path: Sotto/Info.plist
       properties:
         NSMicrophoneUsageDescription: Sotto listens for nearby speech and records only while people are talking. Audio is processed on this device.
-        UIBackgroundModes: [audio]
+        NSBluetoothAlwaysUsageDescription: Sotto connects to your paired Omi wearable to capture audio from its microphone.
+        UIBackgroundModes: [audio, bluetooth-central]
         NSSupportsLiveActivities: true
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -64,6 +70,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Sotto
+      - package: SwiftOpus
+        product: Opus
 schemes:
   Sotto:
     build:

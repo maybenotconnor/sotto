@@ -20,6 +20,8 @@
 	<string>1</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Sotto connects to your paired Omi wearable to capture audio from its microphone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Sotto listens for nearby speech and records only while people are talking. Audio is processed on this device.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -27,6 +29,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>bluetooth-central</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
