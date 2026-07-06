@@ -216,4 +216,67 @@ struct ConversationMergerTests {
         #expect(survivor.contains("First part text one two three."))
         #expect(!survivor.contains("gap"))
     }
+
+    private func addM4A(seconds: Double, in dir: URL, id: String) throws {
+        let cafURL = dir.appendingPathComponent("\(id).caf")
+        let m4aURL = dir.appendingPathComponent("\(id).m4a")
+        let writer = try CAFSegmentWriter(cafURL: cafURL, m4aURL: m4aURL)
+        try writer.append([Float](repeating: 0, count: Int(seconds * Double(VADConstants.sampleRate))))
+        writer.close()
+        try CAFSegmentWriter.transcodeToM4A(caf: cafURL, m4a: m4aURL)
+        try FileManager.default.removeItem(at: cafURL)
+    }
+
+    @Test func allPartsWithAudioStitchIntoMergedM4A() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        try addM4A(seconds: 0.5, in: dir, id: "09-15-30")
+        try addM4A(seconds: 0.75, in: dir, id: "10-01-00")
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+
+        #expect(outcome.mergedEntry.hasAudio)
+        #expect(FileManager.default.fileExists(atPath: outcome.mergedM4AURL.path))
+        #expect(outcome.mergedM4AURL.lastPathComponent == "09-15-30.m4a")
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("10-01-00.m4a").path))
+        // No temp leftovers.
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasPrefix(".merge-") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test func anyPartMissingAudioYieldsTranscriptOnlyMerge() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        try addM4A(seconds: 0.5, in: dir, id: "09-15-30")   // part 2 has NO audio
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+
+        #expect(!outcome.mergedEntry.hasAudio)
+        // The straggling part-1 audio is gone — a transcript-only merged conversation
+        // must not keep audio that matches only a fraction of its transcript.
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("09-15-30.m4a").path))
+    }
+
+    @Test func stitchFailureAbortsLeavingEverythingUntouched() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        try addM4A(seconds: 0.5, in: dir, id: "09-15-30")
+        try Data([0x00, 0x01]).write(to: dir.appendingPathComponent("10-01-00.m4a"))  // garbage
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+
+        await #expect(throws: ConversationMerger.MergeError.self) {
+            _ = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        }
+        // NOTHING changed: both .mds intact, both .m4as still present.
+        let partOne = try String(
+            contentsOf: dir.appendingPathComponent("09-15-30.md"), encoding: .utf8)
+        #expect(partOne.contains("First part text one two three."))
+        #expect(!partOne.contains("gap"))
+        #expect(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("10-01-00.md").path))
+        #expect(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("09-15-30.m4a").path))
+    }
 }
