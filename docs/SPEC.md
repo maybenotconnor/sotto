@@ -120,7 +120,7 @@ Five states. v2 had four; v3 adds **Idle** (app open, not listening) and defines
 
 - _Max segment length_ — force-finalize at 2 h and immediately continue in a new segment (ring buffer refilled from live audio). Bounds loss from any single corrupt file and keeps transcription jobs sane.
 - _Min segment length_ — segments under 3 s (default) are deleted, not transcribed (VAD false-positive filter).
-- _Disk guard_ — below 500 MB free: stop starting new segments, warn via notification + Live Activity.
+- _Disk guard_ — below 500 MB free: stop starting new segments, warn via notification.
 
 ---
 
@@ -351,7 +351,7 @@ A Live Activity runs whenever the app is not Idle. This is not polish — it car
 2. **Failure visibility.** If iOS kills the app, the Live Activity freezes/disappears — the user can see listening died instead of discovering a blank afternoon at 9 pm.
 3. **Review compliance.** Guideline 2.5.14 requires "a clear visual and/or audible indication when recording"; documented rejections show reviewers want it persistent and non-dismissable. Orange system dot + permanent Live Activity is the strongest available answer.
 
-Content spec — lock screen & Dynamic Island (expanded): state label (Listening / Recording / Paused — call / Paused by you), elapsed listening time, today's conversation count, Pause/Resume button. Dynamic Island (compact): state glyph + count. Update on every state transition; no timers ticking faster than the system allows for Live Activity updates.
+Content spec — lock screen: state label (Listening / Recording / Paused — call / Paused by you), elapsed listening time, the session's conversation count (always labeled — never a bare number), Pause/Resume button. Dynamic Island (expanded): state glyph + label, elapsed time, Pause/Resume. Dynamic Island (compact/minimal): state glyph only, tinted by phase (green listening, red recording, orange paused) — no count. Update on every state transition; no timers ticking faster than the system allows for Live Activity updates.
 
 ---
 
