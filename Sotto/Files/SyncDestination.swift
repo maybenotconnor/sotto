@@ -84,6 +84,24 @@ enum SegmentExporter {
         return Exported(markdown: markdown, audio: audio)
     }
 
+    /// Merge/delete propagation: best-effort coordinated delete of the mirrored
+    /// `<day>/<basename>.md` + `.m4a` for a conversation removed (or merged away)
+    /// locally. Missing mirror files are fine — never exported, or already gone.
+    /// Like everything here, failures degrade silently; local state is truth.
+    static func remove(m4aURL: URL, from destination: URL) {
+        let didAccess = destination.startAccessingSecurityScopedResource()
+        defer { if didAccess { destination.stopAccessingSecurityScopedResource() } }
+        let dayName = m4aURL.deletingLastPathComponent().lastPathComponent
+        let dayDir = destination.appendingPathComponent(dayName, isDirectory: true)
+        let base = m4aURL.deletingPathExtension().lastPathComponent
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        coordinator.coordinate(writingItemAt: dayDir, options: [], error: &coordinationError) { dir in
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(base).md"))
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(base).m4a"))
+        }
+    }
+
     /// Settings "Export all now" backfill: mirrors every `.md`/`.m4a` under `root`'s day
     /// directories. `_day.json` (internal index) and `.caf` (pre-transcode scratch) never
     /// leave the device. Returns the number of files copied.

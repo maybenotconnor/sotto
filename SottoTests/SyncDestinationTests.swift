@@ -125,4 +125,30 @@ struct SyncDestinationTests {
         #expect(!FileManager.default.fileExists(
             atPath: dest.appendingPathComponent("2026-07-04/08-30-00.caf").path))
     }
+
+    @Test func removeDeletesMirroredPairAndToleratesAbsence() throws {
+        let local = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoveTests-\(UUID().uuidString)")
+        let day = local.appendingPathComponent("2026-03-14", isDirectory: true)
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let m4aURL = day.appendingPathComponent("09-15-30.m4a")
+        try Data([0x01]).write(to: m4aURL)
+        try "body".write(
+            to: day.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoveDest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        SegmentExporter.export(m4aURL: m4aURL, to: destination)
+        let mirroredMD = destination.appendingPathComponent("2026-03-14/09-15-30.md")
+        #expect(FileManager.default.fileExists(atPath: mirroredMD.path))
+
+        SegmentExporter.remove(m4aURL: m4aURL, from: destination)
+
+        #expect(!FileManager.default.fileExists(atPath: mirroredMD.path))
+        #expect(!FileManager.default.fileExists(
+            atPath: destination.appendingPathComponent("2026-03-14/09-15-30.m4a").path))
+
+        // Second remove of the now-absent pair: silent no-op, never a crash/throw.
+        SegmentExporter.remove(m4aURL: m4aURL, from: destination)
+    }
 }
