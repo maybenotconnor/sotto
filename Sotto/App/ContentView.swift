@@ -85,6 +85,16 @@ private struct HomeScreen: View {
     }
     @State private var pendingDelete: PendingDelete?
 
+    /// `model.settings` is UserDefaults-backed, not @Observable — a plain read in `banners`
+    /// would go stale when Settings changes the engine. @AppStorage observes the same
+    /// defaults key; nil (pre-M10 installs) falls back to the store's migrating getter.
+    @AppStorage("transcriptionEngine") private var engineRaw: String?
+    private var onDeviceEngineSelected: Bool {
+        let engine = engineRaw.flatMap(TranscriptionBackend.init(rawValue:))
+            ?? model.settings.transcriptionEngine
+        return engine == .speechAnalyzer
+    }
+
     var body: some View {
         List {
             // Header section — scrolls away with the list (user decision; the system orange
@@ -209,9 +219,9 @@ private struct HomeScreen: View {
                 Button("Try again") { Task { await model.downloadSpeechModel() } }
                     .font(.footnote)
             }
-        } else if case .unsupported = model.assetState {
+        } else if case .unsupported = model.assetState, onDeviceEngineSelected {
             NoticeBanner(
-                text: "On-device transcription isn't available on this device (Simulator or non-Apple-Intelligence hardware). Recordings are saved; transcripts need a supported iPhone or a Deepgram key in Settings.",
+                text: "This device doesn't support on-device transcription. Select another transcription engine in Settings.",
                 color: .secondary)
         }
         if micDenied {

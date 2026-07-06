@@ -98,14 +98,16 @@ struct SettingsView: View {
                 Text("Deepgram (cloud)").tag(TranscriptionBackend.deepgram)
             }
             .onChange(of: engine) { _, value in model.settings.transcriptionEngine = value }
-            HStack {
-                Label("On-device model", systemImage: "iphone")
-                Spacer()
-                switch model.assetState {
-                case .installed: Text("Installed").foregroundStyle(.secondary)
-                case .downloading(let fraction): ProgressView(value: fraction).frame(width: 80)
-                case .unsupported: Text("Unavailable on this device").foregroundStyle(.secondary)
-                default: Button("Download") { Task { await model.downloadSpeechModel() } }
+            if engine == .speechAnalyzer {
+                HStack {
+                    Label("On-device model", systemImage: "iphone")
+                    Spacer()
+                    switch model.assetState {
+                    case .installed: Text("Installed").foregroundStyle(.secondary)
+                    case .downloading(let fraction): ProgressView(value: fraction).frame(width: 80)
+                    case .unsupported: Text("Unavailable on this device").foregroundStyle(.secondary)
+                    default: Button("Download") { Task { await model.downloadSpeechModel() } }
+                    }
                 }
             }
             if engine == .deepgram {
@@ -119,6 +121,8 @@ struct SettingsView: View {
                             keyTestResult = await model.testDeepgramKey(deepgramKey)
                         }
                     }
+                    .buttonStyle(.bordered)   // Form buttons render as bare text; the border
+                                              // keeps it reading as a button even when disabled
                     .disabled(deepgramKey.isEmpty)
                     if let result = keyTestResult {
                         Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -164,6 +168,8 @@ struct SettingsView: View {
             // M11 cloud sync: clone finalized conversations into any Files-provider folder.
             if let syncFolderName {
                 LabeledContent("Cloud sync folder", value: syncFolderName)
+                Text("New conversations are copied to this folder automatically after each transcription — nothing to press.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Button("Export all now") {
                     exportAllResult = "Exporting…"
                     Task {
@@ -172,6 +178,8 @@ struct SettingsView: View {
                             ?? "Folder unavailable — pick it again."
                     }
                 }
+                Text("\"Export all now\" is a one-time catch-up: it copies conversations recorded before you set this folder.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let exportAllResult {
                     Text(exportAllResult).font(.caption).foregroundStyle(.secondary)
                 }
@@ -193,6 +201,8 @@ struct SettingsView: View {
     private var notificationsSection: some View {
         Section("Notifications") {
             LabeledContent("Paused-listening alerts", value: notificationStatus)
+            Text("When a phone call interrupts listening, Sotto sends a quiet notification so you know it's no longer recording.")
+                .font(.caption).foregroundStyle(.secondary)
             Button("Open notification settings") {
                 if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
                     UIApplication.shared.open(url)
