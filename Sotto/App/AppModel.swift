@@ -315,6 +315,19 @@ final class AppModel {
             transcriptKB: Double(transcriptBytes) / 1024)
     }
 
+    /// M11 Settings "Export all now": mirrors every conversation under the local store into
+    /// the sync destination. Returns nil when no destination is configured (or it stopped
+    /// resolving — folder deleted, provider uninstalled), else the number of files copied.
+    /// Detached for the same reason as the per-segment export: provider I/O must not ride
+    /// the main actor.
+    func exportAllToSyncDestination() async -> Int? {
+        guard let destination = SyncDestinationStore().resolve() else { return nil }
+        let root = segmentRoot
+        return await Task.detached(priority: .utility) {
+            SegmentExporter.exportAll(root: root, to: destination)
+        }.value
+    }
+
     /// M6b Settings "Test key": exercises the candidate Deepgram key against a real ~1 s
     /// sample (0.5 s of silence, encoded exactly like a real segment) rather than trusting
     /// key *format* — the only way to know a BYOK key actually works is to use it. Real
@@ -549,6 +562,21 @@ final class AppModel {
                        RetentionEnforcer.applyAfterTranscription(
                            m4aURL: transition.job.m4aURL, retention: settings.audioRetention) {
                         await dayIndexStore.setAudioRemoved(m4aURL: transition.job.m4aURL)
+                    }
+                    // M11 cloud sync: after retention has decided what stays, mirror the
+                    // finalized conversation into the sync folder. AFTER retention on
+                    // purpose — the cloud copy reflects what the app keeps (the transcript
+                    // always ships; the audio only when retained). Destination resolved
+                    // fresh per transition (same pattern as the per-job serviceProvider) so
+                    // changing/clearing the folder applies immediately. Detached: provider
+                    // I/O (iCloud/Drive/OpenCloud) can stall for seconds and must never
+                    // block this handler's index work or ride the main actor.
+                    if transition.job.state == .done,
+                       let syncDestination = SyncDestinationStore().resolve() {
+                        let m4aURL = transition.job.m4aURL
+                        Task.detached(priority: .utility) {
+                            SegmentExporter.export(m4aURL: m4aURL, to: syncDestination)
+                        }
                     }
                 }
             }
