@@ -145,9 +145,11 @@ actor TranscriptionQueue {
     /// SPEC Detail view "Re-transcribe with current backend": ANY existing job for this URL
     /// (done, failed, or pending) is REPLACED — not appended alongside — with a fresh
     /// `.pending` job, then drained immediately. `cafURL` is nil (by the time a segment has a
-    /// job at all, its CAF is long gone); `startDate`/`duration`/`speechDuration` carry over
-    /// from the old job when one existed, else fall back to parsing the store layout exactly
-    /// like `enqueueSalvaged` does.
+    /// job at all, its CAF is long gone); `startDate`/`duration`/`speechDuration`/`source`
+    /// carry over from the old job when one existed (M12 review: `source` must survive too, or
+    /// retranscribing an Omi segment would silently relabel it `.phoneMic`), else fall back to
+    /// parsing the store layout exactly like `enqueueSalvaged` does (source defaults to
+    /// `.phoneMic`, same documented limitation as salvage).
     func retranscribe(m4aURL: URL) async {
         let old = jobs.first(where: { $0.m4aURL == m4aURL })
         jobs.removeAll { $0.m4aURL == m4aURL }
@@ -168,7 +170,8 @@ actor TranscriptionQueue {
 
         jobs.append(TranscriptionJob(
             id: UUID(), cafURL: nil, m4aURL: m4aURL, startDate: startDate,
-            duration: duration, speechDuration: speechDuration, attempts: 0, state: .pending))
+            duration: duration, speechDuration: speechDuration, attempts: 0, state: .pending,
+            source: old?.source ?? .phoneMic))
         persist()
         await drain()
     }

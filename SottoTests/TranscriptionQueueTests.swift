@@ -311,6 +311,27 @@ struct TranscriptionQueueTests {
         #expect(await service.calls == 2)
     }
 
+    /// M12 review finding: retranscribe carried forward startDate/duration/speechDuration from
+    /// the replaced job but not `source` — an Omi segment retranscribed via "Re-transcribe with
+    /// current backend" would silently reset to `.phoneMic`, contradicting the still-`omi`
+    /// `_day.json`/frontmatter. The new job must preserve the old job's source.
+    @Test func retranscribePreservesSourceOfReplacedJob() async throws {
+        let dir = tempDir()
+        let service = FakeTranscriptionService(text: "v1")
+        let queue = TranscriptionQueue(
+            storeURL: dir.appendingPathComponent("jobs.json"), service: service, rootDirectory: dir)
+        var segment = try makeSegment(in: dir.appendingPathComponent("a"))
+        segment.source = .omi
+        await queue.enqueue(segment)
+        await queue.drain()
+        #expect(await queue.jobs.first?.state == .done)
+        #expect(await queue.jobs.first?.source == .omi)
+
+        await queue.retranscribe(m4aURL: segment.m4aURL)
+        #expect(await queue.jobs.count == 1)
+        #expect(await queue.jobs.first?.source == .omi)
+    }
+
     /// M6b review Fix #3: a user deleting a conversation while its transcribe() call is still
     /// in flight must not resurrect the .md/job once transcription finally completes.
     @Test func deletedM4ADuringTranscribeIsNotResurrected() async throws {
