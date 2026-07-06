@@ -101,6 +101,40 @@ struct OmiAudioSourceTests {
         await source.stop()
     }
 
+    @Test func stopFinishesConnectionStateAndBatteryStreams() async throws {
+        let (source, transport) = makeSource()
+        let states = await source.connectionStates()
+        let levels = await source.batteryLevels()
+        _ = try await source.start()
+        await transport.emit(.connecting)
+        await source.stop()
+
+        var stateIterator = states.makeAsyncIterator()
+        // stop() drains buffered straggler events (the .connecting) BEFORE its terminal
+        // yield, then finishes every observer continuation — so an iterator resumed only
+        // AFTER stop() returns sees the full, ended sequence rather than hanging.
+        #expect(await stateIterator.next() == .connecting)
+        #expect(await stateIterator.next() == .disconnected)
+        #expect(await stateIterator.next() == nil)
+
+        var levelIterator = levels.makeAsyncIterator()
+        #expect(await levelIterator.next() == nil)
+    }
+
+    @Test func connectionStatesMulticastsToMultipleSubscribers() async throws {
+        let (source, transport) = makeSource()
+        let states1 = await source.connectionStates()
+        let states2 = await source.connectionStates()
+        _ = try await source.start()
+        var iterator1 = states1.makeAsyncIterator()
+        var iterator2 = states2.makeAsyncIterator()
+
+        await transport.emit(.connecting)
+        #expect(await iterator1.next() == .connecting)
+        #expect(await iterator2.next() == .connecting)
+        await source.stop()
+    }
+
     @Test func reconnectResetsAssemblerSoNoPhantomGap() async throws {
         let (source, transport) = makeSource()
         let stream = try await source.start()

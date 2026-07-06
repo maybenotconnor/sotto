@@ -43,15 +43,29 @@ actor OmiAudioSource: ConnectableAudioSource {
     }
 
     func stop() async {
-        eventTask?.cancel()
-        eventTask = nil
+        // Order matters for quiescence: finish the transport stream first, THEN drain the
+        // pump to completion so any buffered straggler events run through handle() BEFORE
+        // the resets below. (Task.cancel() is inert on a plain for-await over AsyncStream —
+        // only finish() ends it.) No deadlock: while stop() suspends awaiting eventTask,
+        // the actor is free to run handle().
         await transport.stopEvents()
+        await eventTask?.value
+        eventTask = nil
         continuation?.finish()
         continuation = nil
         assembler.reset()
         chunker.reset()
         decoder = nil
         hasStreamedSinceConnect = false
+        setupFailureMessage = nil
+        // Terminate observer streams so downstream consumers (FailoverAudioSource,
+        // AppModel) don't hang on a stream that will never yield again. Subscribers that
+        // survive a restart re-subscribe after start().
+        yieldState(.disconnected)
+        for continuation in stateContinuations.values { continuation.finish() }
+        stateContinuations.removeAll()
+        for continuation in batteryContinuations.values { continuation.finish() }
+        batteryContinuations.removeAll()
     }
 
     func connectionStates() -> AsyncStream<OmiConnectionState> {
