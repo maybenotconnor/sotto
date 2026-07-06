@@ -85,6 +85,12 @@ struct ConversationMergerTests {
         let headings = merged.body.components(separatedBy: "\n").filter { $0.hasPrefix("# ") }
         let started = timeFormatter.string(from: entries[0].startTime)
         #expect(headings == ["# Conversation — \(started)"])
+
+        // wordCount parity: the entry must match what a rebuild-from-frontmatter would
+        // compute for the merged file (the spec's rebuild-parity constraint).
+        #expect(outcome.mergedEntry.wordCount != nil)
+        #expect(outcome.mergedEntry.wordCount
+            == DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0].wordCount)
     }
 
     @Test func mixedBackendsAndSpeakersComputeHonestFrontmatter() async throws {

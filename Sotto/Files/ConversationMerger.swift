@@ -40,11 +40,14 @@ enum ConversationMerger {
 
         // Spec step 1 — stitch to a temp file, only when EVERY part still has its .m4a
         // (any part missing ⇒ transcript-only merge). Stitch failure aborts pre-write.
+        // Temp extension is `.tmp`, NOT `.m4a`: if a crash leaves this file behind,
+        // DayIndexRebuilder.rebuild's `.m4a` scan (and SegmentStore.orphanedCAFs's
+        // `.caf` scan) must never see it and synthesize a bogus queued index entry.
         let m4aURLs = parts.map { dayDirectory.appendingPathComponent("\($0.id).m4a") }
         let allHaveAudio = m4aURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
         var stitchedTempURL: URL?
         if allHaveAudio {
-            let temp = dayDirectory.appendingPathComponent(".merge-\(parts[0].id).m4a")
+            let temp = dayDirectory.appendingPathComponent(".merge-\(parts[0].id).tmp")
             try? FileManager.default.removeItem(at: temp)
             do {
                 try await AudioStitcher.stitch(parts: m4aURLs, to: temp)
@@ -74,11 +77,21 @@ enum ConversationMerger {
         // Spec step 3 — stitched audio over the earliest part's .m4a; transcript-only
         // merges drop a straggling part-1 .m4a (merged conversation has no audio).
         let mergedM4AURL = m4aURLs[0]
+        var mergedHasAudio = false
         if let stitchedTempURL {
-            _ = try? FileManager.default.replaceItemAt(mergedM4AURL, withItemAt: stitchedTempURL)
-            try? FileManager.default.setAttributes(
-                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                ofItemAtPath: mergedM4AURL.path)
+            do {
+                _ = try FileManager.default.replaceItemAt(mergedM4AURL, withItemAt: stitchedTempURL)
+                try? FileManager.default.setAttributes(
+                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                    ofItemAtPath: mergedM4AURL.path)
+                mergedHasAudio = true
+            } catch {
+                // Move failed (e.g. disk full): fall back to a transcript-only merge —
+                // hasAudio must stay truthful, and audio that matches only part of the
+                // transcript must not survive (same rule as the any-part-missing path).
+                try? FileManager.default.removeItem(at: stitchedTempURL)
+                try? FileManager.default.removeItem(at: mergedM4AURL)
+            }
         } else {
             try? FileManager.default.removeItem(at: mergedM4AURL)
         }
@@ -98,7 +111,7 @@ enum ConversationMerger {
             startTime: parts[0].startTime,
             duration: Double(durationSum),
             backend: backend,
-            hasAudio: stitchedTempURL != nil,
+            hasAudio: mergedHasAudio,
             wordCount: mergedFile.map { DayIndexRebuilder.wordCount(of: $0.transcriptBody) },
             transcriptionState: "done",
             title: nil)
