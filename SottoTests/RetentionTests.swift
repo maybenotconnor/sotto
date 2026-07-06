@@ -26,7 +26,7 @@ struct RetentionTests {
         #expect(settings.minSegmentSpeech == 3)
         #expect(settings.preRollSeconds == 1.0)
         #expect(settings.wifiOnlyUpload == true)
-        #expect(settings.deepgramEnabled == false)
+        #expect(settings.transcriptionEngine == .speechAnalyzer)
         settings.vadThreshold = 0.4
         settings.silenceTimeout = 90
         #expect(settings.vadThreshold == Float(0.4))
@@ -89,5 +89,22 @@ struct RetentionTests {
         try CAFSegmentWriter.transcodeToM4A(caf: caf, m4a: m4a)
         let values = try m4a.resourceValues(forKeys: [.isExcludedFromBackupKey])
         #expect(values.isExcludedFromBackup == true)         // SPEC backup policy: audio excluded
+    }
+
+    @Test func transcriptionEngineMigratesFromLegacyToggle() {
+        let suite = UserDefaults(suiteName: "engine-migration-\(UUID().uuidString)")!
+        let settings = SettingsStore(defaults: suite)
+        #expect(settings.transcriptionEngine == .speechAnalyzer)   // fresh install default
+
+        suite.set(true, forKey: "deepgramEnabled")                 // legacy M6b install
+        #expect(settings.transcriptionEngine == .deepgram)         // migrated read
+
+        settings.transcriptionEngine = .speechAnalyzer             // explicit choice wins over legacy
+        #expect(settings.transcriptionEngine == .speechAnalyzer)
+        #expect(suite.string(forKey: "transcriptionEngine") == "speechAnalyzer")
+        #expect(suite.bool(forKey: "deepgramEnabled") == true)     // legacy key untouched
+
+        suite.set("garbage", forKey: "transcriptionEngine")        // corrupted new key falls back
+        #expect(settings.transcriptionEngine == .deepgram)         // to the legacy bool (still true here)
     }
 }

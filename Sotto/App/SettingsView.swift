@@ -35,7 +35,7 @@ struct SettingsView: View {
             minSegment = settings.minSegmentSpeech
             preRoll = settings.preRollSeconds
             retention = settings.audioRetention
-            deepgramEnabled = settings.deepgramEnabled
+            deepgramEnabled = settings.transcriptionEngine == .deepgram
             wifiOnly = settings.wifiOnlyUpload
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
@@ -88,7 +88,7 @@ struct SettingsView: View {
                 }
             }
             Toggle("Use Deepgram (cloud)", isOn: $deepgramEnabled)
-                .onChange(of: deepgramEnabled) { _, value in model.settings.deepgramEnabled = value }
+                .onChange(of: deepgramEnabled) { _, value in model.settings.transcriptionEngine = value ? .deepgram : .speechAnalyzer }
             if deepgramEnabled {
                 SecureField("Deepgram API key", text: $deepgramKey)
                     .onChange(of: deepgramKey) { _, _ in keyTestResult = nil }

@@ -84,14 +84,19 @@ extension SettingsStore {
         nonmutating set { defaults.set(newValue, forKey: "wifiOnlyUpload") }
     }
 
-    /// M6b settings toggle; Task 1's provider closure already requires a Keychain key before
-    /// picking Deepgram — this adds the explicit user-facing opt-in on top of that.
-    var deepgramEnabled: Bool {
+    /// M10 engine picker (supersedes M6b's "Use Deepgram" bool). Reads the legacy
+    /// `deepgramEnabled` key as a migration fallback so pre-M10 installs keep their choice;
+    /// writes only the new key. AppModel's provider closure still requires a Keychain key
+    /// before actually picking Deepgram — this is the user's *preference*, not a guarantee.
+    var transcriptionEngine: TranscriptionBackend {
         get {
-            defaults.object(forKey: "deepgramEnabled") == nil
-                ? false : defaults.bool(forKey: "deepgramEnabled")
+            if let raw = defaults.string(forKey: "transcriptionEngine"),
+               let engine = TranscriptionBackend(rawValue: raw) {
+                return engine
+            }
+            return defaults.bool(forKey: "deepgramEnabled") ? .deepgram : .speechAnalyzer
         }
-        nonmutating set { defaults.set(newValue, forKey: "deepgramEnabled") }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "transcriptionEngine") }
     }
 
     /// M6b onboarding gate: `bool(forKey:)` already returns false when unset, which is

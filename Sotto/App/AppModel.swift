@@ -437,7 +437,7 @@ final class AppModel {
             let monitor = networkMonitor
             let transcriptionQueue = TranscriptionQueue(
                 serviceProvider: {
-                    if settings.deepgramEnabled, keychain.get("deepgramAPIKey") != nil {
+                    if settings.transcriptionEngine == .deepgram, keychain.get("deepgramAPIKey") != nil {
                         let deepgram = DeepgramService(apiKeyProvider: { KeychainStore().get("deepgramAPIKey") })
                         // Wi-Fi gate (M6b): reuses the existing environmental classification
                         // (`.unavailable` → job stays pending, drain stops) rather than adding a
@@ -563,7 +563,7 @@ final class AppModel {
             let assetsInstalled = await installer.assetsInstalled()
             let onDeviceReady = deviceSupported && assetsInstalled
             assetState = !deviceSupported ? .unsupported : (onDeviceReady ? .installed : .notInstalled)
-            let hasDeepgramKey = settings.deepgramEnabled && keychain.get("deepgramAPIKey") != nil
+            let hasDeepgramKey = settings.transcriptionEngine == .deepgram && keychain.get("deepgramAPIKey") != nil
             if onDeviceReady || hasDeepgramKey {
                 Task { await transcriptionQueue.drain() }
             } else if deviceSupported {
