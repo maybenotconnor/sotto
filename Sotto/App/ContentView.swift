@@ -85,6 +85,18 @@ private struct HomeScreen: View {
     }
     @State private var pendingDelete: PendingDelete?
 
+    /// Merge-conversations selection mode. Keys are "<sectionID>/<entryID>" (entry ids
+    /// repeat across days). Plain edit-mode List selection; rows outside history
+    /// segments opt out via .selectionDisabled.
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedKeys = Set<String>()
+    @State private var confirmingMerge = false
+    @State private var mergeFailed = false
+
+    private var eligibility: AppModel.MergeEligibility {
+        AppModel.mergeEligibility(selectedKeys: selectedKeys, sections: model.historySections)
+    }
+
     /// `model.settings` is UserDefaults-backed, not @Observable — a plain read in `banners`
     /// would go stale when Settings changes the engine. @AppStorage observes the same
     /// defaults key; nil (pre-M10 installs) falls back to the store's migrating getter.
@@ -96,15 +108,17 @@ private struct HomeScreen: View {
     }
 
     var body: some View {
-        List {
+        List(selection: $selectedKeys) {
             // Header section — scrolls away with the list (user decision; the system orange
             // mic dot + Live Activity carry the always-visible recording indication).
             Section {
                 statusCard
+                    .selectionDisabled(true)
                 banners   // moved from the old MainScreen at FULL weight: same copy, same
                           // action buttons (Download model / Try again / Open Settings /
                           // Dismiss), stacked when several apply (user decision: don't
                           // over-compress).
+                    .selectionDisabled(true)
             }
             .listRowSeparator(.hidden)
 
@@ -121,6 +135,7 @@ private struct HomeScreen: View {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .onAppear { Task { await model.loadMoreHistory() } }
+                        .selectionDisabled(true)
                 }
                 .listRowSeparator(.hidden)
             } else if model.historySections.isEmpty && model.hasLoadedHistoryOnce {
@@ -128,14 +143,47 @@ private struct HomeScreen: View {
                     Text(emptyStateText)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
+                        .selectionDisabled(true)
                 }
                 .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
+        .environment(\.editMode, $editMode)
         .refreshable { await model.loadInitialHistory() }
         .task { await model.loadInitialHistory() }
         .task(id: pipeline.finalizedCount) { await model.refreshLoadedHistory() }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if !model.historySections.isEmpty {
+                    Button(editMode == .active ? "Done" : "Select") {
+                        withAnimation {
+                            editMode = editMode == .active ? .inactive : .active
+                            selectedKeys.removeAll()
+                        }
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if editMode == .active {
+                VStack(spacing: 6) {
+                    Button("Merge \(selectedKeys.count) conversations") {
+                        confirmingMerge = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled({ if case .eligible = eligibility { false } else { true } }())
+                    if let hint = eligibilityHint {
+                        Text(hint)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(.bar)
+            }
+        }
         .confirmationDialog(
             "Delete this conversation?", isPresented: .init(
                 get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
@@ -152,6 +200,43 @@ private struct HomeScreen: View {
             }
         } message: {
             Text("Deletes the audio and transcript permanently.")
+        }
+        .confirmationDialog(
+            "Merge \(selectedKeys.count) conversations into one?",
+            isPresented: $confirmingMerge
+        ) {
+            Button("Merge", role: .destructive) {
+                guard case .eligible(let dayDirectory, let entries) = eligibility else { return }
+                Task {
+                    if await model.mergeSegments(dayDirectory: dayDirectory, entries: entries) {
+                        withAnimation {
+                            editMode = .inactive
+                            selectedKeys.removeAll()
+                        }
+                    } else {
+                        mergeFailed = true
+                    }
+                }
+            }
+        } message: {
+            Text("The originals are replaced. This can't be undone.")
+        }
+        .alert("Couldn't merge", isPresented: $mergeFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Merging the audio failed. Nothing was changed.")
+        }
+    }
+
+    private var eligibilityHint: String? {
+        switch eligibility {
+        case .eligible: nil
+        case .tooFew:
+            selectedKeys.isEmpty
+                ? "Select conversations to merge"
+                : "Select at least two conversations"
+        case .multipleDays: "Select conversations from the same day"
+        case .notAllDone: "Wait for transcription to finish"
         }
     }
 
@@ -323,6 +408,7 @@ private struct HomeScreen: View {
         switch row {
         case .gap(_, let gap):
             GapRowView(gap: gap)
+                .selectionDisabled(true)
         case .segment(let entry):
             NavigationLink {
                 ConversationDetailView(
@@ -338,6 +424,7 @@ private struct HomeScreen: View {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
             }
+            .tag("\(section.id)/\(entry.id)")
         }
     }
 }

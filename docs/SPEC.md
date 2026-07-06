@@ -285,6 +285,7 @@ Documents/Sotto/2026-03-14/        ← folder = LOCAL date the segment STARTED
 - The Documents directory is exposed to the Files app (`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`) — transcripts are the user's data; Files/Obsidian access is a feature.
 - **Backup policy:** .md transcripts + `_day.json` are included in iCloud/device backup; .m4a audio is marked `isExcludedFromBackup` (bulky, and the transcript is the product). Note in onboarding.
 - **Retention:** Settings offer audio retention = keep forever / delete after transcription / delete after 7 days (default: delete after transcription). Transcripts keep forever unless user deletes.
+- **Merging (2026-07-06):** the user can merge 2+ same-day, fully-transcribed conversations into one (confirm-then-permanent). The merged file takes the earliest part's basename and standard frontmatter (`duration` = sum of parts, `speechEnd` = last part's, `backend` = `mixed` when parts disagree, `speakers` = max across parts); parts are joined with `> N min gap — resumed H:MM AM` markers (plus "speaker numbers restart" between two diarized parts — labels are never renumbered). Audio is stitched only when every part still has its .m4a; otherwise the merged conversation is transcript-only. Title/summary regenerate best-effort (M8 semantics). Merge — and, since the same change, delete — propagate removals to the sync mirror (M11) best-effort. Design: docs/superpowers/specs/2026-07-06-merge-conversations-design.md.
 
 ### Markdown format — SpeechAnalyzer (on-device)
 
