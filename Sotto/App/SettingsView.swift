@@ -139,8 +139,6 @@ struct SettingsView: View {
                 }
                 Toggle("Wi-Fi only uploads", isOn: $wifiOnly)
                     .onChange(of: wifiOnly) { _, value in model.settings.wifiOnlyUpload = value }
-                Text("~$0.26/hr, ~$0.38/hr with diarization, billed to your Deepgram account.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Text("Audio is sent to Deepgram under your account; training opt-out is always sent.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -168,7 +166,7 @@ struct SettingsView: View {
             // M11 cloud sync: clone finalized conversations into any Files-provider folder.
             if let syncFolderName {
                 LabeledContent("Cloud sync folder", value: syncFolderName)
-                Text("New conversations are copied to this folder automatically after each transcription — nothing to press.")
+                Text("New conversations are copied to this folder automatically after each transcription.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Export all now") {
                     exportAllResult = "Exporting…"
