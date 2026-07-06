@@ -278,5 +278,7 @@ struct ConversationMergerTests {
             atPath: dir.appendingPathComponent("10-01-00.md").path))
         #expect(FileManager.default.fileExists(
             atPath: dir.appendingPathComponent("09-15-30.m4a").path))
+        #expect(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("10-01-00.m4a").path))
     }
 }
