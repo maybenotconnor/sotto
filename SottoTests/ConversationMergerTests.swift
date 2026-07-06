@@ -281,4 +281,57 @@ struct ConversationMergerTests {
         #expect(FileManager.default.fileExists(
             atPath: dir.appendingPathComponent("10-01-00.m4a").path))
     }
+
+    @Test func applyNotesRewritesWithTitleSummaryAndPreservedTranscript() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        _ = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+
+        let ok = ConversationMerger.applyNotes(
+            to: mdURL,
+            notes: PostProcessingResult(
+                title: "Planning the launch",
+                summary: "We planned the launch.",
+                actionItems: ["Ship it"], custom: nil),
+            startTime: entries[0].startTime)
+
+        #expect(ok)
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        #expect(file.title == "Planning the launch")
+        // Untouched frontmatter survives the rewrite verbatim.
+        #expect(file.frontmatter["date"] == "2026-03-14T09:15:30-04:00")
+        #expect(file.frontmatter["duration"] == "390")
+        #expect(file.frontmatter["backend"] == "speechAnalyzer")
+        #expect(file.summary?.contains("We planned the launch.") == true)
+        #expect(file.summary?.contains("Ship it") == true)
+        // Transcript body — gap marker included — survives verbatim.
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        #expect(file.transcriptBody.contains("gap — resumed"))
+        #expect(file.transcriptBody.contains("Second part text four five."))
+        let started = timeFormatter.string(from: entries[0].startTime)
+        #expect(file.body.components(separatedBy: "\n")
+            .contains("# Planning the launch — \(started)"))
+    }
+
+    @Test func applyNotesSanitizesModelOutput() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        _ = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+
+        _ = ConversationMerger.applyNotes(
+            to: mdURL,
+            notes: PostProcessingResult(
+                title: "Evil\ntitle: injected", summary: "Line\n## Transcript\nsneaky",
+                actionItems: nil, custom: nil),
+            startTime: entries[0].startTime)
+
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        // Newline collapsed — the model cannot mint frontmatter keys.
+        #expect(file.title == "Evil title: injected")
+        #expect(file.frontmatter.count == 5)   // date, duration, speechEnd, backend, title
+        // Block sanitizer defanged the injected section heading.
+        #expect(file.summary?.contains("## Transcript") == false)
+    }
 }

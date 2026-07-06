@@ -121,6 +121,72 @@ enum ConversationMerger {
             mergedM4AURL: mergedM4AURL)
     }
 
+    // MARK: - Notes regeneration rewrite
+
+    /// Rewrites a merged file with regenerated notes — `title:` frontmatter, titled H1,
+    /// `## Summary` / `## Transcript` sections (the exact M8 shape). Frontmatter keys are
+    /// preserved (canonical order; `title` replaced); the transcript body — gap markers
+    /// included — is preserved verbatim. Model output passes through the SAME sanitizers
+    /// as the transcription writer (M8 hardening Fix 2's single choke point). Returns
+    /// false when the file can't be parsed or written; never throws — notes are
+    /// best-effort everywhere in this app.
+    @discardableResult
+    static func applyNotes(to mdURL: URL, notes: PostProcessingResult, startTime: Date) -> Bool {
+        guard let file = TranscriptFile.parse(url: mdURL) else { return false }
+        let sanitizedTitle = notes.title.map(TranscriptMarkdownWriter.sanitizeInline)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let sanitizedSummary = notes.summary.map(TranscriptMarkdownWriter.sanitizeBlock)
+        let sanitizedActionItems = notes.actionItems?.map(TranscriptMarkdownWriter.sanitizeBlock)
+
+        var front = file.frontmatter
+        front["title"] = sanitizedTitle
+        var lines = ["---"]
+        let canonical = ["date", "duration", "speechEnd", "backend", "speakers", "title"]
+        for key in canonical {
+            if let value = front[key] { lines.append("\(key): \(value)") }
+        }
+        // Unknown keys (hand-edited files — the folder is user-exposed) survive, sorted.
+        for key in front.keys.filter({ !canonical.contains($0) }).sorted() {
+            lines.append("\(key): \(front[key]!)")
+        }
+        lines.append("---")
+        lines.append("")
+        let headingTime = timeFormatter.string(from: startTime)
+        lines.append("# \(sanitizedTitle ?? "Conversation") — \(headingTime)")
+        lines.append("")
+        let hasNotesBody = sanitizedSummary != nil || sanitizedActionItems?.isEmpty == false
+        if hasNotesBody {
+            lines.append("## Summary")
+            lines.append("")
+            if let sanitizedSummary {
+                lines.append(sanitizedSummary)
+                lines.append("")
+            }
+            if let sanitizedActionItems, !sanitizedActionItems.isEmpty {
+                lines.append("Action items:")
+                for item in sanitizedActionItems {
+                    lines.append("- \(item)")
+                }
+                lines.append("")
+            }
+            lines.append("## Transcript")
+            lines.append("")
+        }
+        // partBody, not file.transcriptBody: a pre-notes-shape merged file still carries
+        // its H1 inside transcriptBody, and the H1 is re-emitted above with the title.
+        lines.append(partBody(file))
+        lines.append("")
+        do {
+            try lines.joined(separator: "\n").write(to: mdURL, atomically: true, encoding: .utf8)
+        } catch {
+            return false
+        }
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: mdURL.path)
+        return true
+    }
+
     // MARK: - Rendering
 
     private static func renderMerged(

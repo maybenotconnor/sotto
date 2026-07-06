@@ -94,7 +94,7 @@ enum TranscriptMarkdownWriter {
     }
 
     // model output is untrusted text; never let it alter frontmatter or section structure
-    private static func sanitizeInline(_ text: String) -> String {
+    static func sanitizeInline(_ text: String) -> String {
         let collapsed = text.replacingOccurrences(of: "\n", with: " ")
         let stripped = collapsed.drop { $0 == "#" || $0 == "-" }
         let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,7 +102,7 @@ enum TranscriptMarkdownWriter {
     }
 
     // model output is untrusted text; never let it alter frontmatter or section structure
-    private static func sanitizeBlock(_ text: String) -> String {
+    static func sanitizeBlock(_ text: String) -> String {
         text.replacingOccurrences(of: "\n## ", with: "\n")
     }
 }
