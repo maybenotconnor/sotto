@@ -484,15 +484,28 @@ actor FakeSimpleAudioSource: AudioSource {
     private var continuation: AsyncStream<AudioChunk>.Continuation?
     private(set) var startCount = 0
     private(set) var stopCount = 0
+    private var startDelayMS = 0
+    private var stopDelayMS = 0
 
     func setStartError(_ error: Error?) { startError = error }
+    /// Delays the start of `start()` by `ms` — lets a test suspend the caller mid-activation
+    /// to race a concurrent `stop()` against it deterministically.
+    func setStartDelay(_ ms: Int) { startDelayMS = ms }
+    /// Delays the start of `stop()` by `ms` — lets a test suspend the caller mid-teardown to
+    /// race a concurrent state event against it deterministically.
+    func setStopDelay(_ ms: Int) { stopDelayMS = ms }
+
     func start() async throws -> AsyncStream<AudioChunk> {
+        if startDelayMS > 0 { try? await Task.sleep(for: .milliseconds(startDelayMS)) }
         startCount += 1
         if let startError { throw startError }
         let (stream, c) = AsyncStream.makeStream(of: AudioChunk.self)
         continuation = c
         return stream
     }
-    func stop() { continuation?.finish(); continuation = nil; stopCount += 1 }
+    func stop() async {
+        if stopDelayMS > 0 { try? await Task.sleep(for: .milliseconds(stopDelayMS)) }
+        continuation?.finish(); continuation = nil; stopCount += 1
+    }
     func emitChunk(_ chunk: AudioChunk) { continuation?.yield(chunk) }
 }

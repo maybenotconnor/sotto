@@ -66,6 +66,17 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
     private var returnTask: Task<Void, Never>?
     private var started = false
 
+    /// Bumped at the top of every `start()`/`stop()`. Activation callbacks that suspend on a
+    /// cross-actor await (`activatePhoneMic`, `returnHysteresisElapsed`) capture the generation
+    /// beforehand and re-check it after resuming, so a `stop()` (or restart) that ran to
+    /// completion during the suspension is detected instead of silently clobbered — see the
+    /// concurrency notes above `handle(_:)`.
+    private var generation = 0
+    /// Mirrors the most recent `OmiConnectionState` delivered to `handle(_:)`. Lets
+    /// `returnHysteresisElapsed()` tell, after resuming from a suspended `phoneMic.stop()`,
+    /// whether the Omi is still genuinely streaming or dropped again during that window.
+    private var lastOmiState: OmiConnectionState = .disconnected
+
     /// Tracks whether any source has EVER been successfully activated. Distinguishes the
     /// very first activation (`.initial`) from a later nil→active transition that follows
     /// a `.captureUnavailable` gap (`.omiRecovered`) — see `activate(_:reason:)`.
@@ -80,6 +91,7 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
 
     func start() async throws -> AsyncStream<AudioChunk> {
         guard !started else { throw FailoverError.alreadyStarted }
+        generation += 1
         started = true
         activeSourceType = nil
         hasEmittedInitial = false
@@ -109,6 +121,7 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
     }
 
     func stop() async {
+        generation += 1
         started = false
         for task in [omiPumpTask, micPumpTask, stateTask, startupTask, graceTask, returnTask] {
             task?.cancel()
@@ -161,6 +174,7 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
         // suspended awaiting that child `stop()`. `started` is set false synchronously at
         // the top of `stop()`, before any suspension, so this guard closes that window.
         guard started else { return }
+        lastOmiState = state
         switch state {
         case .streaming:
             graceTask?.cancel(); graceTask = nil
@@ -208,9 +222,19 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
             // that transition is driven directly by `handle(.streaming)`, not this timer.
             return
         }
+        let gen = generation
         micPumpTask?.cancel(); micPumpTask = nil
         await phoneMic.stop()
-        activate(.omi, reason: .omiRecovered)
+        // A concurrent stop()/restart may have run to completion while we were suspended above
+        // (RACE B — see the concurrency notes above `handle(_:)`); re-check before acting.
+        guard generation == gen, started else { return }
+        if lastOmiState == .streaming {
+            activate(.omi, reason: .omiRecovered)
+        } else {
+            // The Omi dropped again during the suspended phoneMic.stop() — claiming it active
+            // would leave nothing capturing. Restart the mic instead.
+            await activatePhoneMic(reason: .omiDisconnected)
+        }
     }
 
     private func activate(_ source: AudioSourceType, reason: AudioSourceChangeReason) {
@@ -225,8 +249,16 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
     }
 
     private func activatePhoneMic(reason: AudioSourceChangeReason) async {
+        let gen = generation
         do {
             let stream = try await phoneMic.start()
+            // A concurrent stop()/restart may have run to completion while `phoneMic.start()`
+            // was suspended above (RACE A — see the concurrency notes above `handle(_:)`).
+            // Undo the now-orphaned start rather than resuming as if nothing happened.
+            guard generation == gen, started else {
+                await phoneMic.stop()
+                return
+            }
             micPumpTask = Task { [weak self] in
                 for await chunk in stream {
                     await self?.forward(chunk, from: .phoneMic)
@@ -234,6 +266,7 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
             }
             activate(.phoneMic, reason: reason)
         } catch {
+            guard generation == gen, started else { return }
             activeSourceType = nil
             emit(AudioSourceChange(source: nil, reason: .captureUnavailable))
         }
