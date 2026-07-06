@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import UserNotifications
+import UniformTypeIdentifiers
 
 /// SPEC "Settings": Listening / Transcription / Storage / Notifications / About & Legal.
 struct SettingsView: View {
@@ -18,6 +19,9 @@ struct SettingsView: View {
     @State private var usage: AppModel.StorageUsage?
     @State private var showPowerUser = false
     @State private var notificationStatus = "—"
+    @State private var showSyncFolderPicker = false
+    @State private var syncFolderName: String?
+    @State private var exportAllResult: String?
 
     var body: some View {
         Form {
@@ -28,6 +32,15 @@ struct SettingsView: View {
             aboutSection
         }
         .navigationTitle("Settings")
+        .fileImporter(isPresented: $showSyncFolderPicker, allowedContentTypes: [.folder]) { result in
+            guard case .success(let url) = result else { return }
+            do {
+                try SyncDestinationStore().save(url: url)
+                syncFolderName = SyncDestinationStore().displayName
+            } catch {
+                exportAllResult = "Couldn't save that folder — try picking it again."
+            }
+        }
         .task {
             let settings = model.settings
             vadThreshold = settings.vadThreshold
@@ -39,6 +52,7 @@ struct SettingsView: View {
             wifiOnly = settings.wifiOnlyUpload
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
+            syncFolderName = SyncDestinationStore().displayName
             let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
             notificationStatus = switch notificationSettings.authorizationStatus {
             case .authorized: "On"
@@ -146,6 +160,31 @@ struct SettingsView: View {
             }
             Text("Your recordings live in Files ▸ On My iPhone ▸ Sotto.")
                 .font(.caption).foregroundStyle(.secondary)
+
+            // M11 cloud sync: clone finalized conversations into any Files-provider folder.
+            if let syncFolderName {
+                LabeledContent("Cloud sync folder", value: syncFolderName)
+                Button("Export all now") {
+                    exportAllResult = "Exporting…"
+                    Task {
+                        let copied = await model.exportAllToSyncDestination()
+                        exportAllResult = copied.map { "Copied \($0) file(s)." }
+                            ?? "Folder unavailable — pick it again."
+                    }
+                }
+                if let exportAllResult {
+                    Text(exportAllResult).font(.caption).foregroundStyle(.secondary)
+                }
+                Button("Stop syncing", role: .destructive) {
+                    SyncDestinationStore().clear()
+                    self.syncFolderName = nil
+                    exportAllResult = nil
+                }
+            } else {
+                Button("Set cloud sync folder…") { showSyncFolderPicker = true }
+                Text("New conversations are copied there after transcription — works with iCloud Drive, Google Drive, OpenCloud, and any Files provider.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
