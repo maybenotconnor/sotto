@@ -40,11 +40,91 @@ struct SyncDestinationStore: Sendable {
     func resolve() -> URL? {
         guard let data = defaults.data(forKey: Self.bookmarkKey) else { return nil }
         var stale = false
-        guard let url = try? URL(resolvingBookmarkData: data, bookmarkDataIsStale: &stale),
-              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let url = try? URL(resolvingBookmarkData: data, bookmarkDataIsStale: &stale) else { return nil }
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         if stale, let refreshed = try? url.bookmarkData() {
             defaults.set(refreshed, forKey: Self.bookmarkKey)
         }
         return url
+    }
+}
+
+/// M11 cloud sync: best-effort mirror of finalized conversations into the sync destination,
+/// preserving the local store layout — `<destination>/<yyyy-MM-dd>/<HH-mm-ss>.md` plus the
+/// `.m4a` when it still exists (export runs AFTER retention, so the cloud mirrors what the
+/// app actually keeps; the transcript always ships). Every write goes through
+/// NSFileCoordinator — file-provider backends require coordinated access for correctness.
+/// All failures degrade to "didn't copy" (reflected in the return value + best-effort
+/// retry via the next export/exportAll); nothing here ever throws into a caller.
+enum SegmentExporter {
+    struct Exported: Equatable {
+        let markdown: Bool
+        let audio: Bool
+    }
+
+    @discardableResult
+    static func export(m4aURL: URL, to destination: URL) -> Exported {
+        let didAccess = destination.startAccessingSecurityScopedResource()
+        defer { if didAccess { destination.stopAccessingSecurityScopedResource() } }
+        let dayName = m4aURL.deletingLastPathComponent().lastPathComponent
+        let dayDir = destination.appendingPathComponent(dayName, isDirectory: true)
+        let mdURL = m4aURL.deletingPathExtension().appendingPathExtension("md")
+
+        var markdown = false
+        var audio = false
+        let coordinator = NSFileCoordinator()
+        var coordinationError: NSError?
+        coordinator.coordinate(writingItemAt: dayDir, options: [], error: &coordinationError) { dir in
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            markdown = copyReplacing(from: mdURL, into: dir)
+            audio = copyReplacing(from: m4aURL, into: dir)
+        }
+        return Exported(markdown: markdown, audio: audio)
+    }
+
+    /// Settings "Export all now" backfill: mirrors every `.md`/`.m4a` under `root`'s day
+    /// directories. `_day.json` (internal index) and `.caf` (pre-transcode scratch) never
+    /// leave the device. Returns the number of files copied.
+    @discardableResult
+    static func exportAll(root: URL, to destination: URL) -> Int {
+        let didAccess = destination.startAccessingSecurityScopedResource()
+        defer { if didAccess { destination.stopAccessingSecurityScopedResource() } }
+        guard let days = try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
+
+        var copied = 0
+        let coordinator = NSFileCoordinator()
+        for day in days {
+            guard (try? day.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                  let files = try? FileManager.default.contentsOfDirectory(
+                      at: day, includingPropertiesForKeys: nil) else { continue }
+            let exportable = files.filter { ["md", "m4a"].contains($0.pathExtension) }
+            guard !exportable.isEmpty else { continue }
+            let targetDay = destination.appendingPathComponent(day.lastPathComponent, isDirectory: true)
+            var coordinationError: NSError?
+            coordinator.coordinate(writingItemAt: targetDay, options: [], error: &coordinationError) { dir in
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                for file in exportable where copyReplacing(from: file, into: dir) {
+                    copied += 1
+                }
+            }
+        }
+        return copied
+    }
+
+    private static func copyReplacing(from source: URL, into directory: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: source.path) else { return false }
+        let target = directory.appendingPathComponent(source.lastPathComponent)
+        do {
+            if FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+            try FileManager.default.copyItem(at: source, to: target)
+            return true
+        } catch {
+            return false
+        }
     }
 }
