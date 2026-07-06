@@ -217,9 +217,16 @@ actor FakeNotificationScheduler: NotificationScheduling {
     private(set) var authorizationRequests = 0
     private(set) var scheduled = 0
     private(set) var cancelled = 0
+    // M12 Task 8: counters for the source-change notification seam.
+    private(set) var sourceFallbackCount = 0
+    private(set) var captureUnavailableCount = 0
+    private(set) var lowBatteryLevels: [Int] = []
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
     func schedulePausedNotification() { scheduled += 1 }
     func cancelPausedNotification() { cancelled += 1 }
+    func scheduleSourceFallbackNotification() { sourceFallbackCount += 1 }
+    func scheduleCaptureUnavailableNotification() { captureUnavailableCount += 1 }
+    func scheduleOmiLowBatteryNotification(level: Int) { lowBatteryLevels.append(level) }
 }
 
 /// NotificationScheduling whose cancel suspends until released — for ordering races.
@@ -230,6 +237,9 @@ actor GatedNotificationScheduler: NotificationScheduling {
 
     func requestAuthorizationIfNeeded() {}
     func schedulePausedNotification() {}
+    func scheduleSourceFallbackNotification() {}
+    func scheduleCaptureUnavailableNotification() {}
+    func scheduleOmiLowBatteryNotification(level: Int) {}
 
     func cancelPausedNotification() async {
         cancelWasRequested = true
@@ -383,11 +393,11 @@ final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0
     private(set) var endedCount = 0
     private(set) var endAllStaleCount = 0
-    private(set) var updates: [(phase: SottoActivityAttributes.Phase, count: Int)] = []
+    private(set) var updates: [(phase: SottoActivityAttributes.Phase, count: Int, sourceLabel: String?)] = []
 
     func sessionStarted(at date: Date) { startedCount += 1 }
-    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int) {
-        updates.append((phase, conversationCount))
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int, sourceLabel: String?) {
+        updates.append((phase, conversationCount, sourceLabel))
     }
     func sessionEnded() { endedCount += 1 }
     func endAllStale() { endAllStaleCount += 1 }

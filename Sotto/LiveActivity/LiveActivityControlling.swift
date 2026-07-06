@@ -7,11 +7,21 @@ import Foundation
 @MainActor
 protocol LiveActivityControlling: AnyObject {
     func sessionStarted(at date: Date)
-    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int)
+    /// M12: `sourceLabel` mirrors the pipeline's `activeSourceType.displayName` (nil pre-M12
+    /// or while nothing is capturing). Use the `update(phase:conversationCount:)` extension
+    /// overload below when the caller has no source label to report.
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int, sourceLabel: String?)
     func sessionEnded()
     /// End every leftover activity from a previous process (iOS keeps them up to 8 h after
     /// a kill). Call at launch and defensively before requesting a fresh one.
     func endAllStale()
+}
+
+extension LiveActivityControlling {
+    /// Convenience overload for call sites (and fakes) that don't track a source label.
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int) {
+        update(phase: phase, conversationCount: conversationCount, sourceLabel: nil)
+    }
 }
 
 @MainActor
@@ -34,11 +44,11 @@ final class SottoLiveActivityController: LiveActivityControlling {
             attributes: SottoActivityAttributes(startedAt: date), content: content)
     }
 
-    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int) {
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int, sourceLabel: String?) {
         guard let activity else { return }
         let content = ActivityContent(
             state: SottoActivityAttributes.ContentState(
-                phase: phase, conversationCount: conversationCount),
+                phase: phase, conversationCount: conversationCount, sourceLabel: sourceLabel),
             staleDate: nil)
         Task { await activity.update(content) }
     }

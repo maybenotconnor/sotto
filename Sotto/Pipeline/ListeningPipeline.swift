@@ -41,6 +41,10 @@ final class ListeningPipeline {
     /// M9: mirrors the recorder's currently-open-segment start date (unified home's live
     /// "Recording…" row timer) — set from `apply()`.
     private(set) var currentSegmentStartDate: Date?
+    /// M12: which device is currently capturing (nil when idle or nothing capturing). For a
+    /// plain (non-switching) source this is just `source.sourceType`, set once on start(); for
+    /// a `SourceSwitchingAudioSource` (FailoverAudioSource) it tracks `sourceChanges()`.
+    private(set) var activeSourceType: AudioSourceType?
 
     private let source: any AudioSource
     private let recorder: any SegmentRecording
@@ -48,6 +52,7 @@ final class ListeningPipeline {
     private let liveActivity: (any LiveActivityControlling)?
     private let notifications: (any NotificationScheduling)?
     private var pumpTask: Task<Void, Never>?
+    private var sourceEventTask: Task<Void, Never>?
     private var isTransitioning = false
     private var queuedStops: [CheckedContinuation<Void, Never>] = []
     private var pendingPark: HaltReason?
@@ -91,6 +96,16 @@ final class ListeningPipeline {
                 for await chunk in stream {
                     await self?.handle(chunk)
                 }
+            }
+            if let switching = source as? any SourceSwitchingAudioSource {
+                sourceEventTask = Task { [weak self] in
+                    for await change in await switching.sourceChanges() {
+                        await self?.handleSourceChange(change)
+                    }
+                }
+            } else {
+                activeSourceType = source.sourceType
+                Task { await recorder.setActiveSource(source.sourceType) }
             }
             await notifications?.requestAuthorizationIfNeeded()
             sessionStartedAt = Date()
@@ -175,6 +190,16 @@ final class ListeningPipeline {
                     await self?.handle(chunk)
                 }
             }
+            if let switching = source as? any SourceSwitchingAudioSource {
+                sourceEventTask = Task { [weak self] in
+                    for await change in await switching.sourceChanges() {
+                        await self?.handleSourceChange(change)
+                    }
+                }
+            } else {
+                activeSourceType = source.sourceType
+                Task { await recorder.setActiveSource(source.sourceType) }
+            }
             await notifications?.cancelPausedNotification()
         } catch {
             status = .interrupted
@@ -217,6 +242,8 @@ final class ListeningPipeline {
         await source.stop()          // finish the stream: no new chunks after this
         await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
+        sourceEventTask?.cancel()    // source.stop() above already finishes sourceChanges();
+        sourceEventTask = nil        // explicit cancel+nil keeps teardown deterministic.
         switch mode {
         case .stop:
             let snapshot = await recorder.finishAndFinalize()
@@ -224,6 +251,7 @@ final class ListeningPipeline {
             status = .idle   // defensive; apply() already set + heartbeat-recorded idle
             haltReason = nil
             sessionStartedAt = nil
+            activeSourceType = nil
             log("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
@@ -266,6 +294,58 @@ final class ListeningPipeline {
         apply(snapshot)
     }
 
+    /// M12: reacts to a `SourceSwitchingAudioSource`'s `sourceChanges()` stream. Rare race
+    /// (FailoverAudioSource RACE B recovery) can redeliver the SAME source with the SAME
+    /// reason back-to-back (e.g. two `.phoneMic`/`.omiDisconnected` events with no
+    /// intervening recovery) — `recorder.rollover(to:)` is still called every time (a no-op
+    /// finalize-wise when nothing is open), but the log line and user-facing notification are
+    /// gated on the source actually having changed, so a repeat never double-notifies.
+    private func handleSourceChange(_ change: AudioSourceChange) async {
+        let previousSource = activeSourceType
+        switch change.reason {
+        case .initial:
+            if let source = change.source {
+                activeSourceType = source
+                await recorder.setActiveSource(source)
+                log("Capturing via \(source.displayName)")
+            }
+        case .omiDisconnected:
+            guard let source = change.source else { return }
+            let snapshot = await recorder.rollover(to: source)
+            activeSourceType = source
+            apply(snapshot)
+            if previousSource != source {
+                log("Omi disconnected — continuing on iPhone mic")
+                await notifications?.scheduleSourceFallbackNotification()
+            }
+        case .omiRecovered:
+            guard let source = change.source else { return }
+            let snapshot = await recorder.rollover(to: source)
+            activeSourceType = source
+            apply(snapshot)
+            if previousSource != source {
+                log("Omi reconnected")
+            }
+        case .captureUnavailable:
+            activeSourceType = nil
+            if previousSource != nil {
+                log("Nothing capturing — Omi gone and mic unavailable")
+                await notifications?.scheduleCaptureUnavailableNotification()
+            }
+        }
+        pushLiveActivitySource()
+    }
+
+    /// Pushes a Live Activity update carrying the fresh `activeSourceType` even when
+    /// status/finalizedCount didn't change (a rollover mid-.listening is exactly that case) —
+    /// `apply()`'s own update calls only fire on a status or count transition.
+    private func pushLiveActivitySource() {
+        if let phase = activityPhase(for: status) {
+            liveActivity?.update(phase: phase, conversationCount: finalizedCount,
+                                 sourceLabel: activeSourceType?.displayName)
+        }
+    }
+
     private func apply(_ snapshot: RecorderSnapshot) {
         let newStatus: Status
         switch snapshot.state {
@@ -279,13 +359,15 @@ final class ListeningPipeline {
             status = newStatus
             heartbeat?.record(snapshot.state)
             if let phase = activityPhase(for: newStatus) {
-                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount)
+                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount,
+                                     sourceLabel: activeSourceType?.displayName)
             }
         } else if finalizedCount != snapshot.finalizedCount {
             // Status-unchanged path: the branch above already pushed the fresh count when
             // status ALSO changed, so this only fires standalone — no double update.
             if let phase = activityPhase(for: status) {
-                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount)
+                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount,
+                                     sourceLabel: activeSourceType?.displayName)
             }
         }
         finalizedCount = snapshot.finalizedCount

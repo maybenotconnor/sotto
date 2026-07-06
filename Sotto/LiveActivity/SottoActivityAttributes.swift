@@ -16,6 +16,10 @@ struct SottoActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var phase: Phase
         var conversationCount: Int
+        /// M12: capture-source label ("Omi" / "iPhone mic"); nil pre-M12 or phone-mic-only.
+        /// Defaulted so existing `ContentState(phase:conversationCount:)` call sites keep
+        /// compiling — additive to the wire format shared with SottoWidgets.
+        var sourceLabel: String? = nil
     }
 
     /// Session start, for the elapsed-time timer on the lock screen.
