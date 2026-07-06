@@ -368,11 +368,11 @@ final class FakeLiveActivityController: LiveActivityControlling {
     private(set) var startedCount = 0
     private(set) var endedCount = 0
     private(set) var endAllStaleCount = 0
-    private(set) var updates: [(label: String, count: Int, paused: Bool)] = []
+    private(set) var updates: [(phase: SottoActivityAttributes.Phase, count: Int)] = []
 
     func sessionStarted(at date: Date) { startedCount += 1 }
-    func update(stateLabel: String, conversationCount: Int, isPaused: Bool) {
-        updates.append((stateLabel, conversationCount, isPaused))
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int) {
+        updates.append((phase, conversationCount))
     }
     func sessionEnded() { endedCount += 1 }
     func endAllStale() { endAllStaleCount += 1 }

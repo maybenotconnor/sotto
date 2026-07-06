@@ -278,17 +278,15 @@ final class ListeningPipeline {
         if status != newStatus {
             status = newStatus
             heartbeat?.record(snapshot.state)
-            liveActivity?.update(
-                stateLabel: activityLabel(for: newStatus),
-                conversationCount: snapshot.finalizedCount,
-                isPaused: newStatus == .interrupted)
+            if let phase = activityPhase(for: newStatus) {
+                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount)
+            }
         } else if finalizedCount != snapshot.finalizedCount {
             // Status-unchanged path: the branch above already pushed the fresh count when
             // status ALSO changed, so this only fires standalone — no double update.
-            liveActivity?.update(
-                stateLabel: activityLabel(for: status),
-                conversationCount: snapshot.finalizedCount,
-                isPaused: status == .interrupted)
+            if let phase = activityPhase(for: status) {
+                liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount)
+            }
         }
         finalizedCount = snapshot.finalizedCount
         diskGuardActive = snapshot.diskGuardActive
@@ -309,16 +307,16 @@ final class ListeningPipeline {
         }
     }
 
-    /// Instance (not static): the .interrupted case depends on `haltReason`, which is
-    /// per-pipeline state, not derivable from `status` alone.
-    func activityLabel(for status: Status) -> String {
+    /// Instance (not static): the paused cases depend on `haltReason`, which is
+    /// per-pipeline state, not derivable from `status` alone. Returns nil for
+    /// idle/starting — there is nothing meaningful to render (idle is immediately
+    /// followed by sessionEnded(), and starting resolves to listening within the tick).
+    func activityPhase(for status: Status) -> SottoActivityAttributes.Phase? {
         switch status {
-        case .idle: "Stopped"
-        case .starting: "Starting…"
-        case .listening: "Listening"
-        case .recording: "Recording"
-        case .silence: "Listening"
-        case .interrupted: haltReason == .userPause ? "Paused by you" : "Paused — call"
+        case .idle, .starting: nil
+        case .listening, .silence: .listening
+        case .recording: .recording
+        case .interrupted: haltReason == .userPause ? .pausedByUser : .pausedBySystem
         }
     }
 }

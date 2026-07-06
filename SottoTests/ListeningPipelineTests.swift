@@ -135,7 +135,7 @@ struct ListeningPipelineTests {
         await source.emitSilentChunks(count: 2)
         await source.finish()
         await pipeline.waitUntilDrained()
-        #expect(activity.updates.contains { $0.label == "Recording" })
+        #expect(activity.updates.contains { $0.phase == .recording })
         await pipeline.stop()
         #expect(activity.endedCount == 1)
     }

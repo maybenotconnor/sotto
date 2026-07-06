@@ -7,7 +7,7 @@ import Foundation
 @MainActor
 protocol LiveActivityControlling: AnyObject {
     func sessionStarted(at date: Date)
-    func update(stateLabel: String, conversationCount: Int, isPaused: Bool)
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int)
     func sessionEnded()
     /// End every leftover activity from a previous process (iOS keeps them up to 8 h after
     /// a kill). Call at launch and defensively before requesting a fresh one.
@@ -28,18 +28,17 @@ final class SottoLiveActivityController: LiveActivityControlling {
         endAllStale()
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let content = ActivityContent(
-            state: SottoActivityAttributes.ContentState(
-                stateLabel: "Listening", conversationCount: 0, isPaused: false),
+            state: SottoActivityAttributes.ContentState(phase: .listening, conversationCount: 0),
             staleDate: nil)
         activity = try? Activity.request(
             attributes: SottoActivityAttributes(startedAt: date), content: content)
     }
 
-    func update(stateLabel: String, conversationCount: Int, isPaused: Bool) {
+    func update(phase: SottoActivityAttributes.Phase, conversationCount: Int) {
         guard let activity else { return }
         let content = ActivityContent(
             state: SottoActivityAttributes.ContentState(
-                stateLabel: stateLabel, conversationCount: conversationCount, isPaused: isPaused),
+                phase: phase, conversationCount: conversationCount),
             staleDate: nil)
         Task { await activity.update(content) }
     }
@@ -47,10 +46,7 @@ final class SottoLiveActivityController: LiveActivityControlling {
     func sessionEnded() {
         guard let activity else { return }
         self.activity = nil
-        let content = ActivityContent(
-            state: SottoActivityAttributes.ContentState(
-                stateLabel: "Stopped", conversationCount: 0, isPaused: true),
-            staleDate: nil)
-        Task { await activity.end(content, dismissalPolicy: .immediate) }
+        // Dismissal is immediate, so final content is never visible — end with none.
+        Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
 }

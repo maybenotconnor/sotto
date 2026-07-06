@@ -18,8 +18,7 @@ struct InterruptionTests {
         #expect(await recorder.markInterruptedCount == 1)
         #expect(await recorder.processedAfterFinish == 0)      // drained before parking
         #expect(await source.stopCallCount == 1)               // engine torn down
-        #expect(activity.updates.last?.label == "Paused — call")
-        #expect(activity.updates.last?.paused == true)
+        #expect(activity.updates.last?.phase == .pausedBySystem)
         #expect(activity.endedCount == 0)                      // activity survives interruption
     }
 
@@ -47,7 +46,7 @@ struct InterruptionTests {
         #expect(await source.startCallCount == 2)
         #expect(await source.stopCallCount >= 2)               // defensive stop before restart
         #expect(await recorder.beginCount == 2)
-        #expect(activity.updates.last?.paused == false)
+        #expect(activity.updates.last?.phase == .listening)
     }
 
     @Test func resumeWhenNotInterruptedIsNoOp() async throws {
@@ -215,7 +214,7 @@ struct InterruptionTests {
         #expect(pipeline.status == .interrupted)
         #expect(pipeline.haltReason == .userPause)
         #expect(await notifications.scheduled == 0)          // user chose this; no "resume" nag
-        #expect(activity.updates.last?.label == "Paused by you")
+        #expect(activity.updates.last?.phase == .pausedByUser)
         #expect(activity.endedCount == 0)                    // activity survives — Resume works
 
         await pipeline.resumeFromInterruption()

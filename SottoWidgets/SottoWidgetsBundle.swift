@@ -9,17 +9,55 @@ struct SottoWidgetsBundle: WidgetBundle {
     }
 }
 
-/// SPEC "Live Activity": state label, elapsed listening time, today's conversation count,
-/// Pause/Resume button. Compact Dynamic Island: state glyph + count.
+extension SottoActivityAttributes.Phase {
+    var label: String {
+        switch self {
+        case .listening: "Listening"
+        case .recording: "Recording"
+        case .pausedByUser: "Paused by you"
+        case .pausedBySystem: "Paused — call"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .listening: .green
+        case .recording: .red
+        case .pausedByUser, .pausedBySystem: .orange
+        }
+    }
+
+    /// Lock screen and expanded Island.
+    var glyph: String {
+        switch self {
+        case .listening: "waveform"
+        case .recording: "record.circle.fill"
+        case .pausedByUser, .pausedBySystem: "pause.circle.fill"
+        }
+    }
+
+    /// Compact and minimal Island slots want the unadorned forms.
+    var compactGlyph: String {
+        switch self {
+        case .listening: "waveform"
+        case .recording: "record.circle.fill"
+        case .pausedByUser, .pausedBySystem: "pause.fill"
+        }
+    }
+}
+
+/// SPEC "Live Activity": lock screen = state label, elapsed timer, labeled conversation
+/// count, Pause/Resume button. Dynamic Island compact/minimal = VAD-state glyph only
+/// (no count); expanded = glyph, label, elapsed timer, Pause/Resume.
 struct SottoLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SottoActivityAttributes.self) { context in
             HStack(spacing: 12) {
-                Image(systemName: context.state.isPaused ? "pause.circle.fill" : "waveform.circle.fill")
+                Image(systemName: context.state.phase.glyph)
                     .font(.title2)
-                    .foregroundStyle(context.state.isPaused ? .orange : .green)
+                    .foregroundStyle(context.state.phase.tint)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(context.state.stateLabel).font(.headline)
+                    Text(context.state.phase.label).font(.headline)
                     HStack(spacing: 6) {
                         Text(context.attributes.startedAt, style: .timer)
                         Text("· \(context.state.conversationCount) conversations")
@@ -29,37 +67,41 @@ struct SottoLiveActivityWidget: Widget {
                 }
                 Spacer()
                 Button(intent: ToggleListeningIntent()) {
-                    Text(context.state.isPaused ? "Resume" : "Pause")
+                    Text(context.state.phase.isPaused ? "Resume" : "Pause")
                         .font(.callout.bold())
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(context.state.isPaused ? .green : .orange)
+                .tint(context.state.phase.isPaused ? .green : .orange)
             }
             .padding()
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: context.state.isPaused ? "pause.circle.fill" : "waveform.circle.fill")
-                        .foregroundStyle(context.state.isPaused ? .orange : .green)
+                    Image(systemName: context.state.phase.glyph)
+                        .foregroundStyle(context.state.phase.tint)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.state.stateLabel).font(.headline)
+                    Text(context.state.phase.label).font(.headline)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text("\(context.state.conversationCount)").font(.headline)
+                    Text(context.attributes.startedAt, style: .timer)
+                        .font(.headline)
+                        .monospacedDigit()
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Button(intent: ToggleListeningIntent()) {
-                        Text(context.state.isPaused ? "Resume" : "Pause")
+                        Text(context.state.phase.isPaused ? "Resume" : "Pause")
                     }
                     .buttonStyle(.borderedProminent)
                 }
             } compactLeading: {
-                Image(systemName: context.state.isPaused ? "pause.fill" : "waveform")
+                Image(systemName: context.state.phase.compactGlyph)
+                    .foregroundStyle(context.state.phase.tint)
             } compactTrailing: {
-                Text("\(context.state.conversationCount)")
+                EmptyView()
             } minimal: {
-                Image(systemName: context.state.isPaused ? "pause.fill" : "waveform")
+                Image(systemName: context.state.phase.compactGlyph)
+                    .foregroundStyle(context.state.phase.tint)
             }
         }
     }
