@@ -179,4 +179,78 @@ struct AppModelTests {
             selectedKeys: ["2026-03-14/09-15-30", "2026-03-14/99-99-99"],
             sections: sections) == .tooFew)
     }
+
+    @Test func mergeSegmentsCombinesFilesIndexAndHistory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MergeModelTests-\(UUID().uuidString)")
+        // Yesterday, so refreshLoadedHistory's "prepend today" logic stays out of the way.
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dayName = dayFormatter.string(from: day)
+        let dir = root.appendingPathComponent(dayName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Frontmatter dates are fixed 2026-03-14 strings; folder day differs — fine, the
+        // model reads entries from the index, and the merger only compares parts to each
+        // other. (Production merges always have matching folder/frontmatter days.)
+        try ConversationMergerTests.partOne.write(
+            to: dir.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+        try ConversationMergerTests.partTwo.write(
+            to: dir.appendingPathComponent("10-01-00.md"), atomically: true, encoding: .utf8)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()   // no _day.json → rebuilds; both entries "done"
+        let section = model.historySections[0]
+        #expect(section.index.segments.count == 2)
+
+        let ok = await model.mergeSegments(
+            dayDirectory: section.dayDirectory, entries: section.index.segments)
+
+        #expect(ok)
+        #expect(model.historySections[0].index.segments.count == 1)
+        #expect(model.historySections[0].index.segments[0].id == "09-15-30")
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("10-01-00.md").path))
+        let merged = try String(
+            contentsOf: dir.appendingPathComponent("09-15-30.md"), encoding: .utf8)
+        #expect(merged.contains("Second part text four five."))
+    }
+
+    @Test func mergeSegmentsReturnsFalseWithoutChangesOnAbort() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MergeAbortTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try ConversationMergerTests.partOne.write(
+            to: dir.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+        // Second entry's .md is MISSING → merger throws missingTranscript.
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()
+        let section = model.historySections[0]
+        let ghost = DaySegmentEntry(
+            id: "10-01-00", startTime: Date(), duration: 120, backend: "speechAnalyzer",
+            hasAudio: false, wordCount: 5, transcriptionState: "done")
+
+        let ok = await model.mergeSegments(
+            dayDirectory: section.dayDirectory,
+            entries: section.index.segments + [ghost])
+
+        #expect(!ok)
+        #expect(model.historySections[0].index.segments.count == 1)   // unchanged
+        let survivor = try String(
+            contentsOf: dir.appendingPathComponent("09-15-30.md"), encoding: .utf8)
+        #expect(!survivor.contains("gap"))
+    }
 }

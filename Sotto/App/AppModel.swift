@@ -319,6 +319,92 @@ final class AppModel {
         await queue?.removeJob(m4aURL: m4aURL)
         await dayIndex?.removeSegment(m4aURL: m4aURL)
         PreviewCache.shared.invalidate(mdURL: mdURL)
+        // Merge-conversations spec (2026-07-06), delete-propagation fix: local deletes
+        // now also clean the sync mirror — best-effort and detached, like every mirror op.
+        if let destination = SyncDestinationStore().resolve() {
+            Task.detached(priority: .utility) {
+                SegmentExporter.remove(m4aURL: m4aURL, from: destination)
+            }
+        }
+        await refreshLoadedHistory()
+    }
+
+    /// Merge-conversations orchestration (spec 2026-07-06): file-level merge, then index
+    /// update, queue/cache cleanup, best-effort mirror sync, history refresh, and
+    /// best-effort notes regeneration. Returns false when the merge aborted — nothing on
+    /// disk changed — so the UI can show an alert.
+    func mergeSegments(dayDirectory: URL, entries: [DaySegmentEntry]) async -> Bool {
+        guard let dayIndex else { return false }
+        let outcome: ConversationMerger.Outcome
+        do {
+            outcome = try await ConversationMerger.merge(
+                dayDirectory: dayDirectory, entries: entries)
+        } catch {
+            return false
+        }
+        await dayIndex.applyMerge(
+            dayDirectory: dayDirectory, mergedEntry: outcome.mergedEntry,
+            removedIDs: outcome.removedIDs)
+        // Removed parts: drop any lingering (done) queue jobs; the merged basename keeps
+        // part 1's job untouched — retranscribe/retry paths expect it to exist.
+        for id in outcome.removedIDs {
+            await queue?.removeJob(m4aURL: dayDirectory.appendingPathComponent("\(id).m4a"))
+        }
+        for id in outcome.removedIDs + [outcome.mergedEntry.id] {
+            PreviewCache.shared.invalidate(
+                mdURL: dayDirectory.appendingPathComponent("\(id).md"))
+        }
+        // Mirror: export the merged conversation, remove the merged-away parts. For a
+        // transcript-only merge, remove the merged basename FIRST so a previously
+        // mirrored .m4a doesn't survive next to the new transcript-only .md — export
+        // then re-copies just the .md.
+        if let destination = SyncDestinationStore().resolve() {
+            let mergedM4A = outcome.mergedM4AURL
+            let mergedHasAudio = outcome.mergedEntry.hasAudio
+            let removedURLs = outcome.removedIDs.map {
+                dayDirectory.appendingPathComponent("\($0).m4a")
+            }
+            Task.detached(priority: .utility) {
+                if !mergedHasAudio { SegmentExporter.remove(m4aURL: mergedM4A, from: destination) }
+                SegmentExporter.export(m4aURL: mergedM4A, to: destination)
+                for url in removedURLs { SegmentExporter.remove(m4aURL: url, from: destination) }
+            }
+        }
+        await refreshLoadedHistory()
+        let mergedEntry = outcome.mergedEntry
+        Task { await regenerateNotes(dayDirectory: dayDirectory, entry: mergedEntry) }
+        return true
+    }
+
+    /// Best-effort notes regeneration for a just-merged conversation — M8 semantics
+    /// exactly: any failure (Low Power Mode, model unavailable, transcript too short,
+    /// generation error) leaves the merged file with its default heading; a merge is
+    /// never failed by its notes. Mirrors the queue's postProcessorProvider gates.
+    private func regenerateNotes(dayDirectory: URL, entry: DaySegmentEntry) async {
+        guard !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              FoundationModelsPostProcessor.isModelAvailable else { return }
+        let mdURL = dayDirectory.appendingPathComponent("\(entry.id).md")
+        let m4aURL = dayDirectory.appendingPathComponent("\(entry.id).m4a")
+        guard let file = TranscriptFile.parse(url: mdURL) else { return }
+        // The processor only reads .text; segments/backend are structural placeholders.
+        let input = TranscriptionResult(
+            text: file.transcriptBody, segments: [], duration: entry.duration,
+            backend: .speechAnalyzer)
+        guard let notes = try? await FoundationModelsPostProcessor()
+            .process(transcript: input, audio: nil) else { return }
+        guard ConversationMerger.applyNotes(
+            to: mdURL, notes: notes, startTime: entry.startTime) else { return }
+        // Raw (unsanitized) title into the index — same divergence the transcription
+        // transition handler accepts ("keep-stale by design" precedent).
+        await dayIndex?.updateSegment(
+            m4aURL: m4aURL, transcriptionState: "done", backend: nil, wordCount: nil,
+            title: notes.title)
+        PreviewCache.shared.invalidate(mdURL: mdURL)
+        if let destination = SyncDestinationStore().resolve() {
+            Task.detached(priority: .utility) {
+                SegmentExporter.export(m4aURL: m4aURL, to: destination)
+            }
+        }
         await refreshLoadedHistory()
     }
 
