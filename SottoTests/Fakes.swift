@@ -377,3 +377,44 @@ final class FakeLiveActivityController: LiveActivityControlling {
     func sessionEnded() { endedCount += 1 }
     func endAllStale() { endAllStaleCount += 1 }
 }
+
+/// Scriptable OmiTransport stand-in: tests drive lifecycle events and audio notifications
+/// directly, with no CoreBluetooth involved.
+actor FakeOmiTransport: OmiTransport {
+    private var eventContinuation: AsyncStream<OmiTransportEvent>.Continuation?
+    private var scanContinuation: AsyncStream<OmiDiscovery>.Continuation?
+    private(set) var eventsCallCount = 0
+    private(set) var stopEventsCallCount = 0
+    private(set) var lastDeviceID: UUID?
+
+    func scan() -> AsyncStream<OmiDiscovery> {
+        let (stream, continuation) = AsyncStream.makeStream(of: OmiDiscovery.self)
+        scanContinuation = continuation
+        return stream
+    }
+    func stopScan() { scanContinuation?.finish(); scanContinuation = nil }
+
+    func events(deviceID: UUID) -> AsyncStream<OmiTransportEvent> {
+        eventsCallCount += 1
+        lastDeviceID = deviceID
+        let (stream, continuation) = AsyncStream.makeStream(of: OmiTransportEvent.self)
+        eventContinuation = continuation
+        return stream
+    }
+    func stopEvents() {
+        stopEventsCallCount += 1
+        eventContinuation?.finish()
+        eventContinuation = nil
+    }
+
+    // Test drivers
+    func emit(_ event: OmiTransportEvent) { eventContinuation?.yield(event) }
+    func emitDiscovery(_ d: OmiDiscovery) { scanContinuation?.yield(d) }
+
+    /// Emits a well-formed audio notification wrapping `payload` at `packet#`.
+    func emitAudio(packet: UInt16, index: UInt8 = 0, payload: [UInt8]) {
+        var data = Data([UInt8(packet & 0xFF), UInt8(packet >> 8), index])
+        data.append(contentsOf: payload)
+        emit(.audioNotification(data))
+    }
+}
