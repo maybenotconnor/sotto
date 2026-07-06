@@ -1182,7 +1182,9 @@ git add Sotto/Omi/OmiTransport.swift Sotto/Omi/OmiAudioSource.swift SottoTests/O
 git commit -m "feat: M12 OmiTransport seam + OmiAudioSource actor"
 ```
 
----### Task 6: Recorder — active source stamping + segment rollover
+---
+
+### Task 6: Recorder — active source stamping + segment rollover
 
 The recorder learns which source is active (stamps `FinalizedSegment.source`) and gains `rollover(to:)`: finalize any open segment, stay listening.
 
