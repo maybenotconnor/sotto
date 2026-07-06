@@ -76,6 +76,20 @@ actor DayIndexStore {
         write(index, to: dayDirectory)
     }
 
+    /// Merge-conversations step 5: replaces the merged-away part entries with the single
+    /// merged entry. Same corrupt-index rebuild fallback as `recordQueuedSegment` — and
+    /// safe here for the same reason plus one more: by the time this runs the .md files
+    /// already reflect the merged state, so a rebuild converges on what this write
+    /// produces anyway (the spec's crash-safety story).
+    func applyMerge(dayDirectory: URL, mergedEntry: DaySegmentEntry, removedIDs: [String]) {
+        var index = load(dayDirectory) ?? DayIndexRebuilder.rebuild(dayDirectory: dayDirectory)
+        let dropped = Set(removedIDs + [mergedEntry.id])
+        index.segments.removeAll { dropped.contains($0.id) }
+        index.segments.append(mergedEntry)
+        index.segments.sort { ($0.startTime, $0.id) < ($1.startTime, $1.id) }
+        write(index, to: dayDirectory)
+    }
+
     func recordGap(onDayOf date: Date, from: Date, reason: String) {
         let dayDirectory = rootDirectory.appendingPathComponent(
             Self.dayFormatter.string(from: date), isDirectory: true)

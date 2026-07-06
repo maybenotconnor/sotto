@@ -239,3 +239,56 @@ struct DayIndexTests {
         #expect(await store.index(forDay: url.deletingLastPathComponent())?.segments.isEmpty == true)
     }
 }
+
+@Suite struct DayIndexMergeTests {
+    private func makeDay(_ files: [(id: String, markdown: String)]) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IndexMergeTests-\(UUID().uuidString)")
+            .appendingPathComponent("2026-03-14", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for file in files {
+            try file.markdown.write(
+                to: dir.appendingPathComponent("\(file.id).md"),
+                atomically: true, encoding: .utf8)
+        }
+        return dir
+    }
+
+    @Test func applyMergeReplacesPartEntriesWithMergedEntry() async throws {
+        let dir = try makeDay([
+            ("09-15-30", ConversationMergerTests.partOne),
+            ("10-01-00", ConversationMergerTests.partTwo),
+        ])
+        let store = DayIndexStore(rootDirectory: dir.deletingLastPathComponent())
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+
+        await store.applyMerge(
+            dayDirectory: dir, mergedEntry: outcome.mergedEntry,
+            removedIDs: outcome.removedIDs)
+
+        let index = try #require(await store.index(forDay: dir))
+        #expect(index.segments.count == 1)
+        #expect(index.segments[0] == outcome.mergedEntry)
+    }
+
+    /// The spec's rebuild-parity invariant: after a merge + applyMerge, rebuilding the
+    /// index purely from the folder's .md frontmatter must produce the same segments.
+    @Test func mergedIndexSurvivesRebuildFromFrontmatter() async throws {
+        let dir = try makeDay([
+            ("09-15-30", ConversationMergerTests.partOne),
+            ("10-01-00", ConversationMergerTests.partTwo),
+        ])
+        let store = DayIndexStore(rootDirectory: dir.deletingLastPathComponent())
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        await store.applyMerge(
+            dayDirectory: dir, mergedEntry: outcome.mergedEntry,
+            removedIDs: outcome.removedIDs)
+
+        let stored = try #require(await store.index(forDay: dir))
+        let rebuilt = DayIndexRebuilder.rebuild(dayDirectory: dir)
+
+        #expect(rebuilt.segments == stored.segments)
+    }
+}
