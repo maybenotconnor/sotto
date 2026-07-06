@@ -32,6 +32,11 @@ enum TranscriptMarkdownWriter {
         lines.append("duration: \(Int(job.duration.rounded()))")
         lines.append("speechEnd: \(iso.string(from: job.startDate.addingTimeInterval(job.speechDuration)))")
         lines.append("backend: \(result.backend.rawValue)")
+        // M12 BINDING byte-compat: phone-mic segments (the pre-M12 default) must render
+        // IDENTICAL frontmatter — only .omi gets an explicit `source:` line.
+        if job.source != .phoneMic {
+            lines.append("source: \(job.source.rawValue)")
+        }
         let speakers = Set(result.segments.compactMap(\.speaker))
         if result.backend == .deepgram {
             lines.append("speakers: \(max(speakers.count, 1))")

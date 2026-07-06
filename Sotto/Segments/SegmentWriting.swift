@@ -12,6 +12,9 @@ struct FinalizedSegment: Sendable, Equatable {
     let startDate: Date
     let duration: TimeInterval
     let speechDuration: TimeInterval
+    /// M12: which device captured this segment. Defaulted so every pre-M12 construction
+    /// site and test keeps compiling; the recorder stamps the real value (Task 6).
+    var source: AudioSourceType = .phoneMic
 }
 
 /// One open segment on disk. Deliberately NOT Sendable — instances are created and

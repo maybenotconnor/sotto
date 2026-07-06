@@ -85,7 +85,8 @@ actor TranscriptionQueue {
         jobs.append(TranscriptionJob(
             id: UUID(), cafURL: segment.cafURL, m4aURL: segment.m4aURL,
             startDate: segment.startDate, duration: segment.duration,
-            speechDuration: segment.speechDuration, attempts: 0, state: .pending))
+            speechDuration: segment.speechDuration, attempts: 0, state: .pending,
+            source: segment.source))
         persist()
     }
 
@@ -337,9 +338,10 @@ actor TranscriptionQueue {
         let speechDuration: TimeInterval
         let attempts: Int
         let state: TranscriptionJob.State
+        let source: AudioSourceType
 
         enum CodingKeys: String, CodingKey {
-            case id, cafPath, m4aPath, startDate, duration, speechDuration, attempts, state
+            case id, cafPath, m4aPath, startDate, duration, speechDuration, attempts, state, source
             case cafURL, m4aURL
         }
 
@@ -352,6 +354,7 @@ actor TranscriptionQueue {
             speechDuration = job.speechDuration
             attempts = job.attempts
             state = job.state
+            source = job.source
         }
 
         init(from decoder: Decoder) throws {
@@ -362,6 +365,9 @@ actor TranscriptionQueue {
             speechDuration = try container.decode(TimeInterval.self, forKey: .speechDuration)
             attempts = try container.decode(Int.self, forKey: .attempts)
             state = try container.decode(TranscriptionJob.State.self, forKey: .state)
+            // M12: pre-M12 persisted jobs have no "source" key at all — default to phoneMic,
+            // same decodeIfPresent story as cafPath/m4aPath below.
+            source = try container.decodeIfPresent(AudioSourceType.self, forKey: .source) ?? .phoneMic
             if let path = try container.decodeIfPresent(String.self, forKey: .m4aPath) {
                 m4aPath = path
                 cafPath = try container.decodeIfPresent(String.self, forKey: .cafPath)
@@ -383,6 +389,7 @@ actor TranscriptionQueue {
             try container.encode(speechDuration, forKey: .speechDuration)
             try container.encode(attempts, forKey: .attempts)
             try container.encode(state, forKey: .state)
+            try container.encode(source, forKey: .source)
         }
 
         static func relativize(_ url: URL, root: URL) -> String {
@@ -401,7 +408,7 @@ actor TranscriptionQueue {
             return TranscriptionJob(
                 id: id, cafURL: cafPath.map(resolve), m4aURL: resolve(m4aPath),
                 startDate: startDate, duration: duration, speechDuration: speechDuration,
-                attempts: attempts, state: state)
+                attempts: attempts, state: state, source: source)
         }
     }
 }

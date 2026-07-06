@@ -607,7 +607,8 @@ final class AppModel {
             for url in salvaged {
                 if let job = await transcriptionQueue.enqueueSalvaged(m4aURL: url) {
                     await dayIndexStore.recordQueuedSegment(
-                        m4aURL: job.m4aURL, startTime: job.startDate, duration: job.duration)
+                        m4aURL: job.m4aURL, startTime: job.startDate, duration: job.duration,
+                        source: job.source)
                 }
             }
 
@@ -616,7 +617,8 @@ final class AppModel {
                     await dayIndexStore.recordQueuedSegment(
                         m4aURL: segment.m4aURL,
                         startTime: segment.startDate,
-                        duration: segment.duration)
+                        duration: segment.duration,
+                        source: segment.source)
                     await transcriptionQueue.enqueue(segment)
                     await transcriptionQueue.drain()
                 }

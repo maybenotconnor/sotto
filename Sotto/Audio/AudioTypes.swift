@@ -10,6 +10,15 @@ struct AudioChunk: Sendable, Equatable {
 
 enum AudioSourceType: String, Codable, Sendable {
     case phoneMic
+    case omi
+
+    /// User-facing label (home header, Live Activity, Settings, detail view).
+    var displayName: String {
+        switch self {
+        case .phoneMic: "iPhone mic"
+        case .omi: "Omi"
+        }
+    }
 }
 
 protocol AudioSource: Sendable {

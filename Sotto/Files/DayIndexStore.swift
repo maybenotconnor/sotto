@@ -33,7 +33,10 @@ actor DayIndexStore {
                 .appendingPathComponent("Sotto", isDirectory: true)
     }
 
-    func recordQueuedSegment(m4aURL: URL, startTime: Date, duration: TimeInterval) {
+    func recordQueuedSegment(
+        m4aURL: URL, startTime: Date, duration: TimeInterval,
+        source: AudioSourceType = .phoneMic
+    ) {
         let dayDirectory = m4aURL.deletingLastPathComponent()
         // A corrupt `_day.json` (Documents is user-editable) must not silently discard the
         // day's earlier segments — rebuild from disk (a fresh/empty folder rebuilds empty,
@@ -42,7 +45,8 @@ actor DayIndexStore {
         let entry = DaySegmentEntry(
             id: m4aURL.deletingPathExtension().lastPathComponent,
             startTime: startTime, duration: duration, backend: nil,
-            hasAudio: true, wordCount: nil, transcriptionState: "queued")
+            hasAudio: true, wordCount: nil, transcriptionState: "queued",
+            source: source == .phoneMic ? nil : source.rawValue)
         index.segments.removeAll { $0.id == entry.id }
         index.segments.append(entry)
         index.segments.sort { ($0.startTime, $0.id) < ($1.startTime, $1.id) }

@@ -34,7 +34,8 @@ enum DayIndexRebuilder {
                 // text would otherwise inflate the count with words nobody spoke.
                 wordCount: wordCount(of: file.transcriptBody),
                 transcriptionState: "done",
-                title: front["title"]))
+                title: front["title"],
+                source: front["source"]))
         }
 
         for m4a in m4aFiles {

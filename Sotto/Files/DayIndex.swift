@@ -13,6 +13,9 @@ struct DaySegmentEntry: Codable, Sendable, Equatable {
     // `decodeIfPresent` under the hood, so M5-era `_day.json` files (written before this
     // field existed, with no "title" key at all) still load rather than failing to decode.
     var title: String? = nil
+    // M12: capture device, raw AudioSourceType value ("omi"); nil = phone mic (pre-M12
+    // files have no key — same decodeIfPresent story as `title`).
+    var source: String? = nil
 }
 
 struct DayGapEntry: Codable, Sendable, Equatable {

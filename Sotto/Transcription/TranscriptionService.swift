@@ -55,4 +55,9 @@ struct TranscriptionJob: Codable, Sendable, Equatable, Identifiable {
     let speechDuration: TimeInterval
     var attempts: Int
     var state: State
+    /// M12: which device captured this segment; threaded from `FinalizedSegment.source` by
+    /// `TranscriptionQueue.enqueue`. Defaulted so every pre-M12 construction site keeps
+    /// compiling; `enqueueSalvaged` leaves the default (`.phoneMic` — documented limitation,
+    /// salvaged audio predates any source metadata on disk).
+    var source: AudioSourceType = .phoneMic
 }
