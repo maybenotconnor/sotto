@@ -291,4 +291,53 @@ struct DayIndexTests {
 
         #expect(rebuilt.segments == stored.segments)
     }
+
+    /// The production-common branch: unlike the two tests above (no `_day.json` on disk,
+    /// so `applyMerge` falls back to `DayIndexRebuilder.rebuild`), here the index is
+    /// seeded via `recordQueuedSegment` BEFORE the merge runs — exactly how the app itself
+    /// gets there (segments are recorded as they're queued). `applyMerge`'s plain
+    /// `load(dayDirectory)` must succeed and collapse the two seeded entries into the one
+    /// merged entry; a previously-recorded gap must survive untouched.
+    @Test func applyMergeCollapsesPreSeededIndexAndPreservesGaps() async throws {
+        let dir = try makeDay([
+            ("09-15-30", ConversationMergerTests.partOne),
+            ("10-01-00", ConversationMergerTests.partTwo),
+        ])
+        let root = dir.deletingLastPathComponent()
+        let store = DayIndexStore(rootDirectory: root)
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let partOneStart = try #require(iso.date(from: "2026-03-14T09:15:30-04:00"))
+        let partTwoStart = try #require(iso.date(from: "2026-03-14T10:01:00-04:00"))
+        await store.recordQueuedSegment(
+            m4aURL: dir.appendingPathComponent("09-15-30.m4a"), startTime: partOneStart,
+            duration: 270)
+        await store.recordQueuedSegment(
+            m4aURL: dir.appendingPathComponent("10-01-00.m4a"), startTime: partTwoStart,
+            duration: 120)
+
+        // A gap recorded before the merge, on the same local day as `dir` ("2026-03-14") —
+        // built from local date components (not an absolute instant) so it lands in `dir`
+        // regardless of the test machine's timezone, matching `recordGap`'s own local-day
+        // folder derivation.
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 3
+        components.day = 14
+        components.hour = 12
+        let gapDate = try #require(Calendar.current.date(from: components))
+        await store.recordGap(onDayOf: gapDate, from: gapDate, reason: "uncleanShutdown")
+
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        await store.applyMerge(
+            dayDirectory: dir, mergedEntry: outcome.mergedEntry, removedIDs: outcome.removedIDs)
+
+        let index = try #require(await store.index(forDay: dir))
+        #expect(index.segments.count == 1)
+        #expect(index.segments[0] == outcome.mergedEntry)
+        #expect(index.gaps.count == 1)
+        #expect(index.gaps[0].reason == "uncleanShutdown")
+    }
 }

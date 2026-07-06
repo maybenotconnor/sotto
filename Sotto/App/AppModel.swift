@@ -345,9 +345,13 @@ final class AppModel {
         await dayIndex.applyMerge(
             dayDirectory: dayDirectory, mergedEntry: outcome.mergedEntry,
             removedIDs: outcome.removedIDs)
-        // Removed parts: drop any lingering (done) queue jobs; the merged basename keeps
-        // part 1's job untouched — retranscribe/retry paths expect it to exist.
-        for id in outcome.removedIDs {
+        // Drop queue jobs for the removed parts AND the merged basename itself: the merged
+        // entry's pre-merge job (if any) carries part 1's stale duration, which would poison
+        // a later "Re-transcribe" with wrong frontmatter. With no job left,
+        // `TranscriptionQueue.retranscribe` falls back to `parseStoreLayoutMetadata` — startDate
+        // from the store-layout folder/basename, duration read from the actual stitched audio
+        // via AVAudioFile — both correct for the merged file.
+        for id in outcome.removedIDs + [outcome.mergedEntry.id] {
             await queue?.removeJob(m4aURL: dayDirectory.appendingPathComponent("\(id).m4a"))
         }
         for id in outcome.removedIDs + [outcome.mergedEntry.id] {

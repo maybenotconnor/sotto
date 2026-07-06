@@ -92,9 +92,23 @@ private struct HomeScreen: View {
     @State private var selectedKeys = Set<String>()
     @State private var confirmingMerge = false
     @State private var mergeFailed = false
+    /// True while a confirmed merge is in flight (file stitching can take seconds) — gates
+    /// the Merge bar's button so a second tap can't fire a duplicate merge (which would fail
+    /// with a false "Couldn't merge" alert since the originals are already gone) and drives
+    /// the bar's progress indicator.
+    @State private var merging = false
 
     private var eligibility: AppModel.MergeEligibility {
         AppModel.mergeEligibility(selectedKeys: selectedKeys, sections: model.historySections)
+    }
+
+    /// Merge bar/dialog count: prefer the eligible entry count (accurate — matches what will
+    /// actually be merged) over raw `selectedKeys.count`, which can include ineligible/stale
+    /// selections. Falls back to `selectedKeys.count` when not eligible; the Merge button is
+    /// disabled in that case anyway, so the fallback value is never actionable.
+    private var mergeCount: Int {
+        if case .eligible(_, let entries) = eligibility { return entries.count }
+        return selectedKeys.count
     }
 
     /// `model.settings` is UserDefaults-backed, not @Observable — a plain read in `banners`
@@ -168,11 +182,17 @@ private struct HomeScreen: View {
         .safeAreaInset(edge: .bottom) {
             if editMode == .active {
                 VStack(spacing: 6) {
-                    Button("Merge \(selectedKeys.count) conversations") {
+                    Button {
                         confirmingMerge = true
+                    } label: {
+                        if merging {
+                            ProgressView()
+                        } else {
+                            Text("Merge \(mergeCount) conversations")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled({ if case .eligible = eligibility { false } else { true } }())
+                    .disabled(merging || { if case .eligible = eligibility { false } else { true } }())
                     if let hint = eligibilityHint {
                         Text(hint)
                             .font(.footnote)
@@ -202,19 +222,22 @@ private struct HomeScreen: View {
             Text("Deletes the audio and transcript permanently.")
         }
         .confirmationDialog(
-            "Merge \(selectedKeys.count) conversations into one?",
+            "Merge \(mergeCount) conversations into one?",
             isPresented: $confirmingMerge
         ) {
             Button("Merge", role: .destructive) {
                 guard case .eligible(let dayDirectory, let entries) = eligibility else { return }
+                merging = true
                 Task {
                     if await model.mergeSegments(dayDirectory: dayDirectory, entries: entries) {
                         withAnimation {
                             editMode = .inactive
                             selectedKeys.removeAll()
                         }
+                        merging = false
                     } else {
                         mergeFailed = true
+                        merging = false
                     }
                 }
             }

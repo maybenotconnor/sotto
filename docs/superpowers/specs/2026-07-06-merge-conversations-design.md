@@ -35,8 +35,8 @@ regeneration, `PreviewCache` invalidation, sync mirror updates, history refresh.
 
 ## UI flow
 
-- History list gains a selection mode (long-press a row or Select button → standard
-  SwiftUI edit-mode multi-select with checkmarks).
+- History list gains a selection mode (Select button → standard SwiftUI edit-mode
+  multi-select with checkmarks).
 - A **Merge** action (bottom toolbar) enables when: ≥2 selected, all in the same day
   section, all `transcriptionState == "done"`. When disabled by a rule, a short footnote
   explains why ("Select conversations from the same day" / "Wait for transcription to

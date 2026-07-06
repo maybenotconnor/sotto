@@ -93,6 +93,54 @@ struct ConversationMergerTests {
             == DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0].wordCount)
     }
 
+    // Part 3: starts 11:30:00 → speechEnd 11:32:00, own duration — gap from part 2's
+    // 10:03:00 speechEnd is ~87 min.
+    static let partThree = """
+    ---
+    date: 2026-03-14T11:30:00-04:00
+    duration: 90
+    speechEnd: 2026-03-14T11:32:00-04:00
+    backend: speechAnalyzer
+    ---
+
+    # Conversation — 11:30 AM
+
+    Third part text six seven.
+    """
+
+    @Test func mergesThreeTranscriptOnlyParts() async throws {
+        let dir = try makeDay([
+            ("09-15-30", Self.partOne),
+            ("10-01-00", Self.partTwo),
+            ("11-30-00", Self.partThree),
+        ])
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+
+        let outcome = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+
+        #expect(outcome.mergedEntry.id == "09-15-30")                       // earliest basename
+        #expect(outcome.removedIDs == ["10-01-00", "11-30-00"])             // others, in order
+        #expect(outcome.mergedEntry.duration == 270 + 120 + 90)             // three-way sum
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("10-01-00.md").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("11-30-00.md").path))
+
+        let merged = try #require(TranscriptFile.parse(
+            url: dir.appendingPathComponent("09-15-30.md")))
+        #expect(merged.body.contains("First part text one two three."))
+        #expect(merged.body.contains("Second part text four five."))
+        #expect(merged.body.contains("Third part text six seven."))
+
+        // Both gap markers present: part1→part2 and part2→part3.
+        let resumedSecond = timeFormatter.string(from: entries[1].startTime)
+        let resumedThird = timeFormatter.string(from: entries[2].startTime)
+        #expect(merged.body.contains("gap — resumed \(resumedSecond)"))
+        #expect(merged.body.contains("gap — resumed \(resumedThird)"))
+        let gapLines = merged.body.components(separatedBy: "\n").filter { $0.contains("gap — resumed") }
+        #expect(gapLines.count == 2)
+    }
+
     @Test func mixedBackendsAndSpeakersComputeHonestFrontmatter() async throws {
         let deepgramPart = """
         ---
