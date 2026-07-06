@@ -11,7 +11,7 @@ struct SettingsView: View {
     @State private var minSegment: Double = 3
     @State private var preRoll: Double = 1.0
     @State private var retention: AudioRetention = .deleteAfterTranscription
-    @State private var deepgramEnabled = false
+    @State private var engine: TranscriptionBackend = .speechAnalyzer
     @State private var wifiOnly = true
     @State private var deepgramKey = ""
     @State private var keyTestResult: Bool?
@@ -35,7 +35,7 @@ struct SettingsView: View {
             minSegment = settings.minSegmentSpeech
             preRoll = settings.preRollSeconds
             retention = settings.audioRetention
-            deepgramEnabled = settings.transcriptionEngine == .deepgram
+            engine = settings.transcriptionEngine
             wifiOnly = settings.wifiOnlyUpload
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
@@ -77,6 +77,13 @@ struct SettingsView: View {
 
     private var transcriptionSection: some View {
         Section("Transcription") {
+            // M10: engine choice is a Picker, not a toggle — the setting is a selection
+            // between engines (and leaves room for more), not an on/off feature.
+            Picker("Engine", selection: $engine) {
+                Text("On-device").tag(TranscriptionBackend.speechAnalyzer)
+                Text("Deepgram (cloud)").tag(TranscriptionBackend.deepgram)
+            }
+            .onChange(of: engine) { _, value in model.settings.transcriptionEngine = value }
             HStack {
                 Label("On-device model", systemImage: "iphone")
                 Spacer()
@@ -87,9 +94,7 @@ struct SettingsView: View {
                 default: Button("Download") { Task { await model.downloadSpeechModel() } }
                 }
             }
-            Toggle("Use Deepgram (cloud)", isOn: $deepgramEnabled)
-                .onChange(of: deepgramEnabled) { _, value in model.settings.transcriptionEngine = value ? .deepgram : .speechAnalyzer }
-            if deepgramEnabled {
+            if engine == .deepgram {
                 SecureField("Deepgram API key", text: $deepgramKey)
                     .onChange(of: deepgramKey) { _, _ in keyTestResult = nil }
                     .onSubmit { persistKey() }
@@ -105,6 +110,14 @@ struct SettingsView: View {
                         Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundStyle(result ? .green : .red)
                     }
+                }
+                if deepgramKey.isEmpty {
+                    // Surfaces the runtime's silent fallback (AppModel's provider requires a
+                    // key) — without this the picker would look like it's doing something
+                    // that it isn't.
+                    Label("No API key — on-device transcription is used until a key is added.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
                 }
                 Toggle("Wi-Fi only uploads", isOn: $wifiOnly)
                     .onChange(of: wifiOnly) { _, value in model.settings.wifiOnlyUpload = value }
