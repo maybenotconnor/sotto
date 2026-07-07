@@ -379,8 +379,21 @@ final class ListeningPipeline {
     private func pushLiveActivitySource() {
         if let phase = activityPhase(for: status) {
             liveActivity?.update(phase: phase, conversationCount: finalizedCount,
-                                 sourceLabel: activeSourceType?.displayName)
+                                 sourceLabel: liveActivitySourceLabel)
         }
+    }
+
+    /// M12 Task 12: the Live Activity only gets a source label when the source can actually
+    /// switch (i.e. an Omi is paired). `activeSourceType` is stamped for a plain phone-mic
+    /// pipeline too (the recorder's segment tagging needs the accurate value — see that
+    /// property's doc comment), but surfacing "iPhone mic" on every lock-screen update would
+    /// be new, unwanted chatter for the vast majority of users who never paired an Omi. This
+    /// pipeline has no direct handle on `AppModel.pairedOmiName` (mirrors the home header's
+    /// gate — ContentView), but "source can switch" is an equivalent proxy here: only
+    /// `FailoverAudioSource` conforms to `SourceSwitchingAudioSource`, and `AppModel` only
+    /// constructs one when an Omi is actually paired.
+    private var liveActivitySourceLabel: String? {
+        (source is any SourceSwitchingAudioSource) ? activeSourceType?.displayName : nil
     }
 
     private func apply(_ snapshot: RecorderSnapshot) {
@@ -397,14 +410,14 @@ final class ListeningPipeline {
             heartbeat?.record(snapshot.state)
             if let phase = activityPhase(for: newStatus) {
                 liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount,
-                                     sourceLabel: activeSourceType?.displayName)
+                                     sourceLabel: liveActivitySourceLabel)
             }
         } else if finalizedCount != snapshot.finalizedCount {
             // Status-unchanged path: the branch above already pushed the fresh count when
             // status ALSO changed, so this only fires standalone — no double update.
             if let phase = activityPhase(for: status) {
                 liveActivity?.update(phase: phase, conversationCount: snapshot.finalizedCount,
-                                     sourceLabel: activeSourceType?.displayName)
+                                     sourceLabel: liveActivitySourceLabel)
             }
         }
         finalizedCount = snapshot.finalizedCount

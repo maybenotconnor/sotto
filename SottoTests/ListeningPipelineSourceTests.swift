@@ -96,6 +96,42 @@ struct ListeningPipelineSourceTests {
         #expect(pipeline.activeSourceType == nil)
     }
 
+    @Test func liveActivitySourceLabelOnlyForSwitchingSources() async throws {
+        // M12 Task 12: a plain (non-switching) source still stamps `activeSourceType` as
+        // `.phoneMic` (previous test) — the recorder's segment tagging needs that — but the
+        // Live Activity must never surface it as a label. Rendering "iPhone mic" on every
+        // lock-screen update would be new, unwanted chatter for the vast majority of users
+        // who never paired an Omi (mirrors ContentView's `pairedOmiName != nil` gate on the
+        // home header).
+        let plainMic = FakeAudioSource()
+        let plainActivity = FakeLiveActivityController()
+        let plainPipeline = ListeningPipeline(
+            source: plainMic, recorder: FakeRecorder(stateScript: [1: .recording]),
+            liveActivity: plainActivity)
+        await plainPipeline.start()
+        await plainMic.emitSilentChunks(count: 2)
+        await plainMic.finish()
+        await plainPipeline.waitUntilDrained()
+        #expect(plainActivity.updates.contains { $0.phase == .recording })
+        #expect(plainActivity.updates.allSatisfy { $0.sourceLabel == nil })
+        await plainPipeline.stop()
+
+        // A switching (Failover) source is the opposite: once a source event lands, the
+        // label appears — this IS an Omi-paired session (only FailoverAudioSource conforms
+        // to SourceSwitchingAudioSource, and AppModel only builds one when paired).
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let switchingActivity = FakeLiveActivityController()
+        let switchingPipeline = ListeningPipeline(
+            source: failover, recorder: FakeRecorder(), liveActivity: switchingActivity)
+        await switchingPipeline.start()
+        await omi.setState(.streaming)
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(switchingActivity.updates.contains { $0.sourceLabel == "Omi" })
+        await switchingPipeline.stop()
+    }
+
     @Test func repeatFallbackEventDoesNotDoubleNotify() async throws {
         // Regression for the RACE B repeat: FailoverAudioSource can emit the SAME source
         // (.phoneMic/.omiDisconnected) twice in a row with no intervening recovery, when the
