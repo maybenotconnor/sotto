@@ -359,7 +359,9 @@ Append to `SottoTests/AppModelTests.swift` (mirrors `mergeSegmentsCombinesFilesI
         let file = try #require(TranscriptFile.parse(
             url: dir.appendingPathComponent("09-15-30.md")))
         #expect(file.title == "Morning standup")
-        #expect(file.transcriptBody == "First part text one two three.")
+        // .contains, not ==: a pre-M8 plain-body file's transcriptBody legitimately
+        // includes the H1 (no ## Transcript section) — same shape ruling as Task 1.
+        #expect(file.transcriptBody.contains("First part text one two three."))
         // …index followed…
         let indexed = await model.loadDayIndex(for: day)?.segments.first
         #expect(indexed?.title == "Morning standup")
