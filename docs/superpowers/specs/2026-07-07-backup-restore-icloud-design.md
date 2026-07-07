@@ -257,11 +257,11 @@ scope is deliberate (backup stays invisible in Files.app).
   with iCloud backfill/restore entry points.
 - Clear any stale `syncDestinationBookmark` / `syncDestinationDisplayName` UserDefaults keys on
   upgrade (best-effort, one line) so no dangling bookmark lingers.
-- **Coordinate with the in-flight rename WIP:** `AppModel.renameSegment` (on the rename branch)
-  adds a *fifth* mutation site whose step-3 mirror currently calls `SegmentExporter.export` — which
-  this branch deletes. When both land, rewire that step to the `SyncSinkRegistry` fan-out exactly
-  like the other four sites (it's an `upsert`). Whichever branch merges second owns this one-line
-  reconciliation; flag it in that branch's plan.
+- **Rename is a fifth mutation site (now in `main`):** the rename feature merged to `main` (PR #1),
+  so `AppModel.renameSegment` already exists here. Its step-3 mirror calls `SegmentExporter.export`,
+  which this branch deletes — so **this branch owns** rewiring that step to the `SyncSinkRegistry`
+  fan-out exactly like the other four sites (it's an `upsert`). Treat it as the fifth choke point,
+  not a cross-branch coordination.
 
 ## 9. Testing strategy
 
@@ -284,12 +284,14 @@ new warnings; Swift 6, `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated`.
 
 ## 10. Forward compatibility — what the seam reserves
 
-- **WebDAV (next phase):** a `WebDAVSyncSink` conforms to `TranscriptSyncSink`; `activeSinks`
-  appends it when configured. It adds true `MOVE`/`DELETE` HTTP verbs and an **optional audio**
-  backup (its own server, so quota/privacy don't bind). Credentials (server URL + username + app
-  password) in Keychain via the existing `KeychainStore` pattern. Its config form is the first
-  entry in the Settings "additional backup providers" dropdown. Reconcile/catch-up for
-  foreground-only `DELETE`/`MOVE` lag is a WebDAV follow-up, not launch scope.
+- **WebDAV (next phase):** a `WebDAVSyncSink` conforms to `TranscriptSyncSink` (`upsert`=`PUT`,
+  `remove`=`DELETE`; no `MOVE` — same no-rename proof as §3); `activeSinks` appends it when
+  configured. Adds an **optional audio** backup (its own server, so quota/privacy don't bind).
+  Credentials (server URL + username + app password) in Keychain via the existing `KeychainStore`
+  pattern. Its config form is the first entry in the Settings "additional backup providers"
+  dropdown. Reconcile/catch-up for foreground-only `DELETE` lag is a WebDAV follow-up, not launch
+  scope. **Requirements captured in `specs/2026-07-07-webdav-backup-requirements.md`** — the seed
+  for its brainstorm.
 - **Google Drive (future):** another sink conformer + dropdown entry; no core changes.
 
 ## 11. Out of scope / follow-ups
@@ -297,7 +299,7 @@ new warnings; Swift 6, `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated`.
 - WebDAV connector and its Settings UI (next design doc).
 - Google Drive (future design doc).
 - Multi-device *live* sync / conflict resolution — explicitly not a goal; this is device migration.
-- A background reconcile pass to catch foreground-only WebDAV `DELETE`/`MOVE` lag (WebDAV follow-up).
+- A background reconcile pass to catch foreground-only WebDAV `DELETE` lag (WebDAV follow-up).
 - Backing up audio to iCloud (never — quota/privacy).
 
 ## 12. Decided in review
@@ -314,5 +316,5 @@ new warnings; Swift 6, `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated`.
 - Protocol surface is `upsert`/`remove` only — **and stays that way**. No feature does a filesystem
   rename/move: merge reuses the earliest basename, and the in-flight rename feature rewrites `.md`
   content in place without changing the filename (verified against its design), so rename is a plain
-  `upsert`. No `move` verb is needed now or after rename lands. The rename branch's mirror step must
-  be rewired to the sink fan-out on merge (see §8).
+  `upsert`. No `move` verb is needed. Rename shipped to `main` (PR #1); this branch rewires its
+  mirror step to the sink fan-out as the fifth choke point (see §8).
