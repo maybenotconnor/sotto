@@ -10,6 +10,19 @@ import Foundation
 ///   after a background kill (spec stretch S2; willRestoreState reattaches minimally).
 /// - All CBCentralManagerDelegate callbacks arrive on `queue`; every mutation happens
 ///   there, and results cross to consumers only via Sendable AsyncStream yields.
+/// - Session gating: `cancelPeripheralConnection` (in stopEvents) is not instantaneous, so a
+///   cancelled session's callbacks can still arrive after a new session has started. Every
+///   CBPeripheralDelegate callback and the CBCentralManagerDelegate connect/disconnect
+///   callbacks are gated on `peripheral.identifier == targetDeviceID`; stopEvents nils
+///   targetDeviceID first, so a stale callback for a peripheral no session cares about (or
+///   for the previous device once a new one is targeted) is dropped outright. When the
+///   stale callback is for the SAME device as the new session (identity check alone can't
+///   distinguish old vs. new session), `didConnectThisSession` filters out the resulting
+///   phantom disconnect.
+/// - Scan ownership: the public scan() and the events()-driven rediscovery fallback share
+///   one CBCentralManager scan. `publicScanActive`/`rediscoveryScanActive` track who wants
+///   the radio on, so stopping one doesn't silently kill the other, and the radio only
+///   stops once both are done.
 final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.decanlys.Sotto.omi-ble")
     private var central: CBCentralManager?
@@ -18,6 +31,17 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
     private var eventContinuation: AsyncStream<OmiTransportEvent>.Continuation?
     private var scanContinuation: AsyncStream<OmiDiscovery>.Continuation?
     private var audioCharacteristic: CBCharacteristic?
+
+    /// True once `didConnect` has fired for the current session's peripheral, until either a
+    /// real disconnect is handled or the session ends. Distinguishes a genuine "connection
+    /// dropped" disconnect from a phantom one delivered late for a connect that never
+    /// completed (or belonged to a prior, cancelled session for the same device).
+    private var didConnectThisSession = false
+
+    /// Whether the public scan() consumer currently wants the radio scanning.
+    private var publicScanActive = false
+    /// Whether the events() reconnect-by-rediscovery fallback currently wants the radio scanning.
+    private var rediscoveryScanActive = false
 
     private var audioServiceUUID: CBUUID { CBUUID(string: OmiConstants.audioServiceUUID) }
 
@@ -28,6 +52,7 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
         queue.async { [self] in
             scanContinuation?.finish()
             scanContinuation = continuation
+            publicScanActive = true
             ensureCentral()
             startScanIfPoweredOn()
         }
@@ -36,7 +61,10 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
 
     func stopScan() async {
         queue.async { [self] in
-            central?.stopScan()
+            publicScanActive = false
+            if !rediscoveryScanActive {
+                central?.stopScan()
+            }
             scanContinuation?.finish()
             scanContinuation = nil
         }
@@ -48,6 +76,7 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
             eventContinuation?.finish()
             eventContinuation = continuation
             targetDeviceID = deviceID
+            didConnectThisSession = false
             ensureCentral()
             connectIfPoweredOn()
         }
@@ -60,6 +89,13 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
             peripheral = nil
             targetDeviceID = nil
             audioCharacteristic = nil
+            didConnectThisSession = false
+            if rediscoveryScanActive {
+                rediscoveryScanActive = false
+                if !publicScanActive {
+                    central?.stopScan()
+                }
+            }
             eventContinuation?.finish()
             eventContinuation = nil
         }
@@ -76,6 +112,7 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
 
     private func startScanIfPoweredOn() {
         guard let central, central.state == .poweredOn else { return }
+        guard publicScanActive || rediscoveryScanActive else { return }
         central.scanForPeripherals(withServices: [audioServiceUUID])
     }
 
@@ -84,11 +121,13 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
         if let known = central.retrievePeripherals(withIdentifiers: [targetDeviceID]).first {
             peripheral = known
             known.delegate = self
+            didConnectThisSession = false
             eventContinuation?.yield(.connecting)
             central.connect(known)
         } else {
             // Paired device iOS no longer knows (e.g. after Bluetooth reset): rediscover
             // by service UUID, connect on sight (didDiscover checks targetDeviceID).
+            rediscoveryScanActive = true
             eventContinuation?.yield(.connecting)
             central.scanForPeripherals(withServices: [audioServiceUUID])
         }
@@ -99,7 +138,7 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            startScanIfPoweredOn()   // no-op unless a scan consumer exists
+            startScanIfPoweredOn()   // no-op unless a scan consumer (public or rediscovery) exists
             connectIfPoweredOn()
         case .poweredOff:
             eventContinuation?.yield(.bluetoothUnavailable(.poweredOff))
@@ -123,12 +162,17 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        scanContinuation?.yield(OmiDiscovery(
-            id: peripheral.identifier,
-            name: peripheral.name ?? "Omi device",
-            rssi: RSSI.intValue))
+        if publicScanActive {
+            scanContinuation?.yield(OmiDiscovery(
+                id: peripheral.identifier,
+                name: peripheral.name ?? "Omi device",
+                rssi: RSSI.intValue))
+        }
         if peripheral.identifier == targetDeviceID {
-            central.stopScan()
+            rediscoveryScanActive = false
+            if !publicScanActive {
+                central.stopScan()
+            }
             self.peripheral = peripheral
             peripheral.delegate = self
             central.connect(peripheral)
@@ -136,6 +180,8 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard peripheral.identifier == targetDeviceID else { return }
+        didConnectThisSession = true
         peripheral.discoverServices([
             audioServiceUUID,
             CBUUID(string: OmiConstants.batteryServiceUUID),
@@ -144,17 +190,18 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
                         error: Error?) {
+        guard peripheral.identifier == targetDeviceID else { return }
         eventContinuation?.yield(.disconnected)
-        if peripheral.identifier == targetDeviceID {
-            central.connect(peripheral)      // pending retry, completes on reappearance
-        }
+        central.connect(peripheral)      // pending retry, completes on reappearance
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
                         error: Error?) {
+        guard peripheral.identifier == targetDeviceID else { return }
         audioCharacteristic = nil
-        eventContinuation?.yield(.disconnected)
-        if peripheral.identifier == targetDeviceID {
+        if didConnectThisSession {
+            didConnectThisSession = false
+            eventContinuation?.yield(.disconnected)
             eventContinuation?.yield(.connecting)
             central.connect(peripheral)      // immediate pending re-connect (spec)
         }
@@ -163,6 +210,7 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
 
 extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard peripheral.identifier == targetDeviceID else { return }
         for service in peripheral.services ?? [] {
             if service.uuid == audioServiceUUID {
                 peripheral.discoverCharacteristics([
@@ -178,6 +226,7 @@ extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral,
                     didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard peripheral.identifier == targetDeviceID else { return }
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
             case CBUUID(string: OmiConstants.codecCharacteristicUUID):
@@ -195,6 +244,7 @@ extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard peripheral.identifier == targetDeviceID else { return }
         guard let value = characteristic.value else { return }
         switch characteristic.uuid {
         case CBUUID(string: OmiConstants.codecCharacteristicUUID):
