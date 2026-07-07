@@ -138,9 +138,18 @@ struct ListeningPipelineSourceTests {
         // Omi drops again during a suspended phoneMic.stop() mid-return-hysteresis. The
         // pipeline must still roll the recorder over both times (harmless no-op finalize) but
         // must only fire the user-facing notification once.
+        //
+        // Widened window (M12 final review Important #3): a dedicated config (not the shared
+        // `fastConfig`) pushes returnHysteresis to 300ms (mic stop delay to 600ms) with the
+        // sleep landing at 350ms — 50ms past the hysteresis boundary, comfortably inside the
+        // [300, 900] window instead of 90ms inside the shared fastConfig's [80, 230].
+        // Implementation timing is untouched; only this test's fake config/delay widen.
+        let config = FailoverConfig(
+            startupRace: .milliseconds(60), reconnectGrace: .milliseconds(60),
+            returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: config)
         let recorder = FakeRecorder()
         let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: failover, recorder: recorder,
@@ -159,11 +168,11 @@ struct ListeningPipelineSourceTests {
         // (triggered by the hysteresis firing) is suspended — FailoverAudioSourceTests'
         // `omiDropDuringDelayedMicStopRestartsMic` exercises the identical race on the source
         // alone; here we drive it through the pipeline.
-        await mic.setStopDelay(150)
-        await omi.setState(.streaming)                      // arms the 80 ms return-hysteresis
-        try await Task.sleep(for: .milliseconds(90))        // hysteresis fires; phoneMic.stop() suspended
+        await mic.setStopDelay(600)
+        await omi.setState(.streaming)                      // arms the 300 ms return-hysteresis
+        try await Task.sleep(for: .milliseconds(350))       // hysteresis fires; phoneMic.stop() suspended
         await omi.setState(.disconnected)                   // omi drops again mid-suspended-stop
-        try await Task.sleep(for: .milliseconds(400))        // let everything settle
+        try await Task.sleep(for: .milliseconds(700))       // let everything settle
 
         #expect(pipeline.activeSourceType == .phoneMic)
         // Still exactly one fallback notification despite the repeat .omiDisconnected event.

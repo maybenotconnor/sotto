@@ -65,17 +65,26 @@ struct FailoverAudioSourceTests {
     }
 
     @Test func blipWithinGraceDoesNotSwitch() async throws {
+        // Widened window (M12 final review Important #3): a dedicated config pushes
+        // reconnectGrace to 300ms with the blip landing at 50ms — comfortably inside the
+        // window, instead of a 20ms blip inside the shared 80ms `fastConfig` grace, which
+        // could flake under scheduler load. Implementation timing (FailoverAudioSource
+        // itself) is untouched — only this test's fake config widens; `fastConfig` stays
+        // shared/unmodified for the other tests in this file.
+        let config = FailoverConfig(
+            startupRace: .milliseconds(80), reconnectGrace: .milliseconds(300),
+            returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: config)
         var changes = await collectChanges(failover)
         _ = try await failover.start()
         await omi.setState(.streaming)
         #expect(await changes.next()?.reason == .initial)
         await omi.setState(.disconnected)
-        try await Task.sleep(for: .milliseconds(20))     // < 80 ms grace
+        try await Task.sleep(for: .milliseconds(50))     // well inside the 300ms grace
         await omi.setState(.streaming)
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(350))    // past the original grace duration
         #expect(await mic.startCount == 0)               // never fell back
         await failover.stop()
     }
@@ -116,9 +125,17 @@ struct FailoverAudioSourceTests {
     }
 
     @Test func stopDuringDelayedMicStartLeavesNoOrphanCapture() async throws {
+        // Widened window (M12 final review Important #3): a dedicated config pushes
+        // reconnectGrace to 300ms (mic start delay to 600ms) with the sleep landing at
+        // 350ms — 50ms past the grace boundary, comfortably inside the [300, 900] window
+        // instead of 130ms inside the shared fastConfig's [80, 230]. Implementation timing
+        // is untouched; only this test's fake config/delay widen.
+        let config = FailoverConfig(
+            startupRace: .milliseconds(80), reconnectGrace: .milliseconds(300),
+            returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: config)
         // Collect every change event from the start so we can assert none arrived after stop.
         let changeStream = await failover.sourceChanges()
         let collected = Task<[AudioSourceChange], Never> {
@@ -126,13 +143,13 @@ struct FailoverAudioSourceTests {
             for await change in changeStream { events.append(change) }
             return events
         }
-        await mic.setStartDelay(150)
+        await mic.setStartDelay(600)
         _ = try await failover.start()
         await omi.setState(.streaming)
-        await omi.setState(.disconnected)          // arms the 80 ms grace timer
-        try await Task.sleep(for: .milliseconds(130))   // grace (80ms) fires; mic.start() now suspended
+        await omi.setState(.disconnected)          // arms the 300 ms grace timer
+        try await Task.sleep(for: .milliseconds(350))   // grace (300ms) fires; mic.start() now suspended
         await failover.stop()
-        try await Task.sleep(for: .milliseconds(200))   // let the delayed (150ms) start fully resolve
+        try await Task.sleep(for: .milliseconds(600))   // let the delayed (600ms) start fully resolve
         #expect(await mic.stopCount >= (await mic.startCount))
         #expect(await failover.activeSourceType == nil)
         let events = await collected.value
