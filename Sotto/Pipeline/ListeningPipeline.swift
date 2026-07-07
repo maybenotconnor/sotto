@@ -56,6 +56,12 @@ final class ListeningPipeline {
     private var isTransitioning = false
     private var queuedStops: [CheckedContinuation<Void, Never>] = []
     private var pendingPark: HaltReason?
+    /// Dedup for the loud "nothing capturing" notification. `activeSourceType == nil` is
+    /// overloaded (both "never activated" and "already notified"), so a nil-check alone would
+    /// silently drop the very FIRST `.captureUnavailable` event on a cold start (Omi loses the
+    /// startup race AND phoneMic.start() throws immediately) — the one signal that nothing is
+    /// recording. Cleared on every successful activation and on a full stop().
+    private var hasNotifiedCaptureUnavailable = false
 
     init(
         source: any AudioSource,
@@ -242,8 +248,15 @@ final class ListeningPipeline {
         await source.stop()          // finish the stream: no new chunks after this
         await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
-        sourceEventTask?.cancel()    // source.stop() above already finishes sourceChanges();
-        sourceEventTask = nil        // explicit cancel+nil keeps teardown deterministic.
+        // source.stop() above already finished sourceChanges(), but a plain `for await` over
+        // AsyncStream is inert to cancellation — a buffered/in-flight handleSourceChange (e.g.
+        // recorder.rollover(to:) + apply(snapshot) reporting .listening) could otherwise land
+        // AFTER finishAndFinalize() below sets status to .idle, reverting it. Await the drain
+        // so it fully resolves BEFORE finalizing (no deadlock: both run on MainActor, and
+        // awaiting .value suspends performHalt, freeing the actor for handleSourceChange calls
+        // still in flight; the loop itself ends because source.stop() finished the stream).
+        await sourceEventTask?.value
+        sourceEventTask = nil
         switch mode {
         case .stop:
             let snapshot = await recorder.finishAndFinalize()
@@ -252,6 +265,7 @@ final class ListeningPipeline {
             haltReason = nil
             sessionStartedAt = nil
             activeSourceType = nil
+            hasNotifiedCaptureUnavailable = false
             log("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
@@ -306,6 +320,7 @@ final class ListeningPipeline {
         case .initial:
             if let source = change.source {
                 activeSourceType = source
+                hasNotifiedCaptureUnavailable = false
                 await recorder.setActiveSource(source)
                 log("Capturing via \(source.displayName)")
             }
@@ -313,6 +328,7 @@ final class ListeningPipeline {
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
+            hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
                 log("Omi disconnected — continuing on iPhone mic")
@@ -322,13 +338,15 @@ final class ListeningPipeline {
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
+            hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
                 log("Omi reconnected")
             }
         case .captureUnavailable:
             activeSourceType = nil
-            if previousSource != nil {
+            if !hasNotifiedCaptureUnavailable {
+                hasNotifiedCaptureUnavailable = true
                 log("Nothing capturing — Omi gone and mic unavailable")
                 await notifications?.scheduleCaptureUnavailableNotification()
             }
