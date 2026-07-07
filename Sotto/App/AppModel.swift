@@ -92,6 +92,30 @@ final class AppModel {
     /// here instead of the real Documents/Sotto directory, so history paging and the
     /// `DayIndexStore` operate purely on a synthetic directory tree.
     private let segmentRootOverride: URL?
+    /// Test seam mirroring `segmentRootOverride`: when set, Omi pairing reads/writes this
+    /// store instead of `UserDefaults.standard`.
+    private let omiStoreOverride: OmiDeviceStore?
+    /// M12: the long-lived recorder built once in `performSetUp` — reused (not
+    /// reconstructed) by `rebuildPipelineIfIdle()` so a pair/forget mid-app-life doesn't pay
+    /// for a second CoreML detector load and, more importantly, doesn't stand up a second
+    /// `TranscriptionQueue`/`DayIndexStore` racing the originals over the same persisted
+    /// files (see `composePipeline`).
+    private var recorder: RecorderStateMachine?
+    /// M12 pairing (Settings, Task 11): the currently paired Omi's display name, or nil.
+    private(set) var pairedOmiName: String?
+    private(set) var omiBatteryLevel: Int?
+    private(set) var omiConnectionState: OmiConnectionState?
+    private(set) var omiSetupFailure: String?
+    /// Two independent pumps (connection-state, battery) rather than one task juggling both
+    /// via `async let` — capturing `self` into an `async let`'s child task trips Swift 6's
+    /// region-based "sending self risks causing data races" check even though every mutation
+    /// is safely hopped back to MainActor; two top-level `Task { [weak self] in }`s (the same
+    /// shape used everywhere else in this file) don't have that problem.
+    private var omiObservationTasks: [Task<Void, Never>] = []
+    /// Dedup for the low-battery notification: fires once per drop below threshold, then
+    /// re-arms once the level recovers with margin — avoids re-notifying on every reading
+    /// while hovering right at the line.
+    private var lowBatteryNotified = false
     // Default mirrors SegmentStore's own default root; overwritten with the real
     // `store.rootDirectory` during performSetUp once `store` exists.
     private var segmentRoot: URL = FileManager.default.urls(
@@ -122,11 +146,13 @@ final class AppModel {
     init(
         assetInstaller: (any SpeechAssetInstalling)? = nil,
         networkMonitor: (any NetworkMonitoring)? = nil,
-        segmentRootOverride: URL? = nil
+        segmentRootOverride: URL? = nil,
+        omiStoreOverride: OmiDeviceStore? = nil
     ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
         self.networkMonitor = networkMonitor ?? WiFiMonitor()
         self.segmentRootOverride = segmentRootOverride
+        self.omiStoreOverride = omiStoreOverride
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
@@ -624,41 +650,11 @@ final class AppModel {
                 }
             }
 
-            let source = PhoneMicAudioSource()
-            let newPipeline = ListeningPipeline(
-                source: source, recorder: recorder, heartbeat: heartbeat,
-                liveActivity: liveActivity,
-                notifications: UserNotificationScheduler())
-            pipeline = newPipeline
-
-            let sessionObserver = AudioSessionObserver(backgroundTasks: UIKitBackgroundTasks())
-            sessionObserver.onInterruptionBegan = { [weak newPipeline] in
-                await newPipeline?.interrupt()
-            }
-            sessionObserver.onInterruptionEndedShouldResume = { [weak newPipeline] shouldResume in
-                // Foregrounded + system says resume → restart. Backgrounded: engine.start()
-                // fails (561145187); recovery stays with the intent/notification/app-open.
-                guard shouldResume, UIApplication.shared.applicationState == .active else { return }
-                await newPipeline?.resumeFromInterruption()
-            }
-            sessionObserver.onRouteChangeDeviceUnavailable = { [weak source, weak newPipeline] in
-                do {
-                    try await source?.rebuildTap()
-                } catch {
-                    // No valid input route: park honestly instead of silently losing capture.
-                    await newPipeline?.interrupt()
-                }
-            }
-            sessionObserver.onMediaServicesReset = { [weak newPipeline] in
-                // Full teardown + rebuild (SPEC): park, then restart the whole stack.
-                await newPipeline?.interrupt()
-                // Backgrounded: engine.start() fails (561145187); recovery stays with the
-                // intent/notification/app-open, and interrupt() already scheduled the fallback.
-                guard UIApplication.shared.applicationState == .active else { return }
-                await newPipeline?.resumeFromInterruption()
-            }
-            sessionObserver.startObserving()
-            observer = sessionObserver
+            // M12: the recorder is long-lived — stored so a later pair/forget rebuild
+            // (`rebuildPipelineIfIdle`) can reuse it via `composePipeline` instead of
+            // reconstructing it (see that property's doc comment for why).
+            self.recorder = recorder
+            composePipeline(recorder: recorder)
 
             // Terminal transitions (done/failed) drive the day index and the retention
             // policy (SPEC "File output" retention: audio deleted after transcription by
@@ -742,5 +738,179 @@ final class AppModel {
         } catch {
             setupError = String(describing: error)
         }
+    }
+
+    /// M12: builds the audio source (the paired-Omi failover branch, or the plain phone
+    /// mic), a fresh `ListeningPipeline`, and its `AudioSessionObserver` — reusing the
+    /// passed-in LONG-LIVED `recorder` (and, through its already-installed segment handler,
+    /// the day index + transcription queue wired up once in `performSetUp`) rather than
+    /// reconstructing any of them.
+    ///
+    /// Called once from `performSetUp` and again from `rebuildPipelineIfIdle()` (pair/forget
+    /// while idle). The split exists because re-running the REST of `performSetUp` on every
+    /// pair/forget is not safe: it would construct a SECOND `TranscriptionQueue` (and
+    /// `DayIndexStore`) against the same persisted `transcription-jobs.json`/`_day.json`
+    /// files as the first — a job the original queue's own launch-drain `Task` is mid-way
+    /// through transcribing would then race a brand-new queue instance reading/writing the
+    /// same files — plus it would reload the CoreML VAD detector for no reason. Everything
+    /// else `performSetUp` does (salvage sweep, heartbeat/gap recording, retention sweep,
+    /// launch drain) is launch-only and must run exactly once per process.
+    private func composePipeline(recorder: RecorderStateMachine) {
+        for task in omiObservationTasks { task.cancel() }
+        omiObservationTasks = []
+        lowBatteryNotified = false
+        omiConnectionState = nil
+        omiBatteryLevel = nil
+        omiSetupFailure = nil
+
+        // M12: auto-prefer a paired Omi (spec "Selection model") — failover to the phone
+        // mic is the selection logic itself; no paired device ⇒ exactly the old
+        // construction path (byte-identical behavior for phone-mic-only users).
+        let omiStore = omiStoreOverride ?? OmiDeviceStore()
+        var omiSource: OmiAudioSource?
+        var plainPhoneMic: PhoneMicAudioSource?
+        let source: any AudioSource
+        if let paired = omiStore.device {
+            let omi = OmiAudioSource(transport: CoreBluetoothOmiTransport(), deviceID: paired.id)
+            omiSource = omi
+            source = FailoverAudioSource(omi: omi, phoneMic: PhoneMicAudioSource())
+            pairedOmiName = paired.name
+        } else {
+            let phoneMic = PhoneMicAudioSource()
+            plainPhoneMic = phoneMic
+            source = phoneMic
+            pairedOmiName = nil
+        }
+
+        let newPipeline = ListeningPipeline(
+            source: source, recorder: recorder, heartbeat: HeartbeatStore(),
+            liveActivity: SottoLiveActivityController(),
+            notifications: UserNotificationScheduler())
+        pipeline = newPipeline
+
+        let sessionObserver = AudioSessionObserver(backgroundTasks: UIKitBackgroundTasks())
+        // Non-nil only for the composed (Omi + phone mic) path — its authoritative, async
+        // `activeSourceType` decides whether an AVAudioSession event is even relevant: while
+        // the Omi (a BLE peripheral, not an AVAudioSession input route) is capturing, a phone
+        // interruption/route-change/media-services-reset must NOT park a perfectly healthy
+        // recording. `nil` on the plain phone-mic path ⇒ every guard below is skipped and
+        // behavior is exactly what it was before M12.
+        let switching = source as? FailoverAudioSource
+        sessionObserver.onInterruptionBegan = { [weak newPipeline, weak switching] in
+            if let switching, await switching.activeSourceType != .phoneMic { return }
+            await newPipeline?.interrupt()
+        }
+        sessionObserver.onInterruptionEndedShouldResume = { [weak newPipeline, weak switching] shouldResume in
+            if let switching, await switching.activeSourceType != .phoneMic { return }
+            // Foregrounded + system says resume → restart. Backgrounded: engine.start()
+            // fails (561145187); recovery stays with the intent/notification/app-open.
+            guard shouldResume, UIApplication.shared.applicationState == .active else { return }
+            await newPipeline?.resumeFromInterruption()
+        }
+        sessionObserver.onRouteChangeDeviceUnavailable = { [weak switching, weak plainPhoneMic, weak newPipeline] in
+            do {
+                if let switching {
+                    // Forwards to the phone mic's tap rebuild only when it's the active
+                    // source; a no-op when the Omi is active (see `handleRouteChange`).
+                    try await switching.handleRouteChange()
+                } else {
+                    try await plainPhoneMic?.rebuildTap()
+                }
+            } catch {
+                // No valid input route: park honestly instead of silently losing capture.
+                await newPipeline?.interrupt()
+            }
+        }
+        sessionObserver.onMediaServicesReset = { [weak newPipeline, weak switching] in
+            if let switching, await switching.activeSourceType != .phoneMic { return }
+            // Full teardown + rebuild (SPEC): park, then restart the whole stack.
+            await newPipeline?.interrupt()
+            // Backgrounded: engine.start() fails (561145187); recovery stays with the
+            // intent/notification/app-open, and interrupt() already scheduled the fallback.
+            guard UIApplication.shared.applicationState == .active else { return }
+            await newPipeline?.resumeFromInterruption()
+        }
+        sessionObserver.startObserving()
+        observer = sessionObserver
+
+        // Battery + connection observation (Settings, Task 11): only meaningful when an Omi
+        // is actually composed into the source. Subscribes immediately — independent of
+        // whether/when the pipeline is ever `start()`-ed — so Settings can show live
+        // connecting/streaming state without requiring an active recording session.
+        if let omiSource {
+            let stateTask = Task { [weak self] in
+                for await state in await omiSource.connectionStates() {
+                    // setupFailureMessage becomes readable once the codec characteristic has
+                    // been processed — refresh it alongside each state change.
+                    let failure = await omiSource.setupFailureMessage
+                    await MainActor.run {
+                        self?.omiConnectionState = state
+                        self?.omiSetupFailure = failure
+                    }
+                }
+            }
+            let batteryTask = Task { [weak self] in
+                for await level in await omiSource.batteryLevels() {
+                    await MainActor.run { self?.applyOmiBattery(level) }
+                }
+            }
+            omiObservationTasks = [stateTask, batteryTask]
+        }
+    }
+
+    /// M12 Settings low-battery notification: fires once per drop below
+    /// `OmiConstants.lowBatteryThresholdPercent`, re-arming only once the level recovers
+    /// with a 10-point margin (avoids re-notifying on every reading while hovering at the
+    /// line). AppModel holds no scheduler reference of its own (mirrors `performSetUp`,
+    /// which also constructs `UserNotificationScheduler()` inline) — constructed fresh here.
+    private func applyOmiBattery(_ level: Int) {
+        omiBatteryLevel = level
+        if level <= OmiConstants.lowBatteryThresholdPercent, !lowBatteryNotified {
+            lowBatteryNotified = true
+            Task { await UserNotificationScheduler().scheduleOmiLowBatteryNotification(level: level) }
+        }
+        if level > OmiConstants.lowBatteryThresholdPercent + 10 { lowBatteryNotified = false }
+    }
+
+    /// Settings "Pair Omi Device…" (Task 11): the pair sheet owns its own scan transport
+    /// lifecycle, this just hands out a fresh one.
+    func makeOmiScanTransport() -> any OmiTransport {
+        CoreBluetoothOmiTransport()
+    }
+
+    /// Settings pairing flow: persists the pairing, then rebuilds the pipeline immediately
+    /// if nothing is listening (else the new source composes on the next Start, mirroring
+    /// the existing "Settings changes apply after launch" convention).
+    func pairOmi(_ discovery: OmiDiscovery) async {
+        (omiStoreOverride ?? OmiDeviceStore()).pair(
+            PairedOmiDevice(id: discovery.id, name: discovery.name))
+        await rebuildPipelineIfIdle()
+    }
+
+    /// Settings "Forget This Device" (Task 11). Battery/connection are cleared immediately
+    /// regardless of whether a rebuild can happen right away — Settings must stop showing
+    /// live readings for a device we've just told the user we'd stop tracking, even if the
+    /// actual source swap has to wait for the current session to end.
+    func forgetOmi() async {
+        (omiStoreOverride ?? OmiDeviceStore()).forget()
+        omiBatteryLevel = nil
+        omiConnectionState = nil
+        await rebuildPipelineIfIdle()
+    }
+
+    /// Re-runs source composition + pipeline/observer wiring when nothing is listening
+    /// (mirroring the Settings "changes apply after launch" convention otherwise). Reuses
+    /// the long-lived `recorder` via `composePipeline` — see that method's doc comment for
+    /// why re-running all of `performSetUp` here would be unsafe. Falls back to a full
+    /// `ensureSetUp()` only when setup hasn't produced a `recorder` yet at all (there is
+    /// nothing to reuse, so that IS the first run, not a re-run).
+    private func rebuildPipelineIfIdle() async {
+        guard pipeline?.status == .idle || pipeline == nil else { return }
+        guard let recorder else {
+            setupTask = nil
+            await ensureSetUp()
+            return
+        }
+        composePipeline(recorder: recorder)
     }
 }

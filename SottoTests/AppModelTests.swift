@@ -253,4 +253,74 @@ struct AppModelTests {
             contentsOf: dir.appendingPathComponent("09-15-30.md"), encoding: .utf8)
         #expect(!survivor.contains("gap"))
     }
+
+    // MARK: - M12 Omi pairing composition
+
+    private func omiModel(suiteSuffix: String) -> AppModel {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
+        let suite = UserDefaults(suiteName: "omi-model-tests-\(suiteSuffix)-\(UUID().uuidString)")!
+        return AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
+            omiStoreOverride: OmiDeviceStore(defaults: suite))
+    }
+
+    /// Task 10: pairing after setup has already completed rebuilds the pipeline in place
+    /// (the pipeline is idle — never started) and surfaces the paired name immediately,
+    /// without disturbing the already-idle pipeline's status.
+    @Test func pairOmiAfterSetupRebuildsAndSurfacesPairedName() async throws {
+        let model = omiModel(suiteSuffix: "pair-after-setup")
+        await model.ensureSetUp()
+        #expect(model.pipeline?.status == .idle)
+        #expect(model.pairedOmiName == nil)
+
+        let discovery = OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50)
+        await model.pairOmi(discovery)
+
+        #expect(model.pairedOmiName == "Test Omi")
+        #expect(model.pipeline?.status == .idle)   // rebuild kept it idle, didn't start it
+    }
+
+    /// Task 10: pairing BEFORE `ensureSetUp()` has ever run has no `recorder` to reuse yet —
+    /// `rebuildPipelineIfIdle` must fall back to a full first-time `ensureSetUp()` rather
+    /// than silently no-op, so the very first pairing (e.g. onboarding) still takes effect.
+    @Test func pairOmiBeforeSetupBootstrapsFullSetup() async throws {
+        let model = omiModel(suiteSuffix: "pair-before-setup")
+        let discovery = OmiDiscovery(id: UUID(), name: "Early Omi", rssi: -40)
+
+        await model.pairOmi(discovery)
+
+        #expect(model.pairedOmiName == "Early Omi")
+        #expect(model.pipeline != nil)
+        #expect(model.pipeline?.status == .idle)
+    }
+
+    /// Task 10: forgetting clears the paired name (via rebuild) and the battery/connection
+    /// readings immediately, even though the rebuild that actually swaps the source is the
+    /// same idle-gated path pairing uses.
+    @Test func forgetOmiClearsPairedNameAndReadings() async throws {
+        let model = omiModel(suiteSuffix: "forget")
+        await model.ensureSetUp()
+        await model.pairOmi(OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50))
+        #expect(model.pairedOmiName == "Test Omi")
+
+        await model.forgetOmi()
+
+        #expect(model.pairedOmiName == nil)
+        #expect(model.omiBatteryLevel == nil)
+        #expect(model.omiConnectionState == nil)
+    }
+
+    /// Task 10: no paired device ⇒ the plain phone-mic-only construction path — pairing is
+    /// never exercised, so `pairedOmiName` stays nil and the pipeline is exactly the old
+    /// single-source shape.
+    @Test func noPairedDeviceKeepsPlainPhoneMicPath() async throws {
+        let model = omiModel(suiteSuffix: "no-pairing")
+        await model.ensureSetUp()
+
+        #expect(model.pairedOmiName == nil)
+        #expect(model.omiConnectionState == nil)
+        #expect(model.omiBatteryLevel == nil)
+        #expect(model.pipeline?.status == .idle)
+    }
 }
