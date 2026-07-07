@@ -219,17 +219,6 @@ enum ConversationMerger {
         } else {
             bodyLines.insert(contentsOf: [heading, ""], at: 0)
         }
-        // If the body has no "## Transcript" section, add one to structure the content
-        // and ensure transcriptBody returns only text after it (consistent with post-applyNotes files).
-        let hasTranscriptSection = bodyLines.contains { $0.hasPrefix("## Transcript") }
-        if !hasTranscriptSection {
-            // Insert "## Transcript" after the H1 (and any blank lines following it).
-            var insertIndex = 1
-            while insertIndex < bodyLines.count, bodyLines[insertIndex].trimmingCharacters(in: .whitespaces).isEmpty {
-                insertIndex += 1
-            }
-            bodyLines.insert(contentsOf: ["## Transcript", ""], at: insertIndex)
-        }
         lines.append(contentsOf: bodyLines)
         lines.append("")
         do {

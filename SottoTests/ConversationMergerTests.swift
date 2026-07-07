@@ -444,9 +444,13 @@ struct ConversationMergerTests {
         let file = try #require(TranscriptFile.parse(url: mdURL))
         #expect(file.title == "Morning standup")
         let started = timeFormatter.string(from: startTime)
-        #expect(file.body.components(separatedBy: "\n")
-            .contains("# Morning standup — \(started)"))
-        #expect(file.transcriptBody == "First part text one two three.")
+        // Exactly ONE heading — replaced in place; and NO section headings minted: a
+        // pre-M8 plain-body file keeps its shape (its transcriptBody legitimately still
+        // carries the H1, exactly as before the rename).
+        let headings = file.body.components(separatedBy: "\n").filter { $0.hasPrefix("# ") }
+        #expect(headings == ["# Morning standup — \(started)"])
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        #expect(!file.body.contains("## Transcript"))
     }
 
     @Test func applyTitleSanitizesUserInputAndRejectsEmpty() async throws {
