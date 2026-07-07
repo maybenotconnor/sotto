@@ -17,7 +17,7 @@ Tap **Start** once in the morning. The app backgrounds. Audio flows from the act
 ## Pipeline
 
 ```
-AudioSource (phone mic in MVP; future BLE device / Watch)
+AudioSource — phone mic alone, or FailoverAudioSource(Omi, phone mic) when an Omi is paired (M12)
     → hardware-format tap → AVAudioConverter → 16 kHz mono Float32
     → AudioChunk ([Float], 4096 samples = 256 ms) via AsyncStream
     → VadManager.processStreamingChunk (Silero v6, CoreML/ANE, FluidAudio)
@@ -35,7 +35,7 @@ AudioSource (phone mic in MVP; future BLE device / Watch)
 
 ## Audio source layer
 
-Audio input is abstracted behind a protocol so the capture device is swappable without touching the downstream pipeline. The protocol deals in **value-type sample chunks, not `AVAudioPCMBuffer`**: engine tap buffers must not be retained across async boundaries, `AVAudioPCMBuffer` is not `Sendable` under Swift 6 strict concurrency, and plain `[Float]` is exactly what the VAD consumes. It also keeps AVFoundation types out of the seam a future BLE (Opus → PCM) source plugs into.
+Audio input is abstracted behind a protocol so the capture device is swappable without touching the downstream pipeline. The protocol deals in **value-type sample chunks, not `AVAudioPCMBuffer`**: engine tap buffers must not be retained across async boundaries, `AVAudioPCMBuffer` is not `Sendable` under Swift 6 strict concurrency, and plain `[Float]` is exactly what the VAD consumes. It also keeps AVFoundation types out of the seam the BLE (Opus → PCM) Omi source plugs into (M12, below).
 
 ```swift
 struct AudioChunk: Sendable {
@@ -51,10 +51,11 @@ protocol AudioSource: Sendable {
     func stop() async
 }
 
-enum AudioSourceType: String, Codable {
+enum AudioSourceType: String, Codable, Sendable {
     case phoneMic
-    case bleDevice   // future: Omi or similar BLE wearable
-    case appleWatch  // future: Watch companion app
+    case omi
+
+    // displayName: "iPhone mic" / "Omi" — home header, Live Activity, Settings, detail view
 }
 ```
 
@@ -67,9 +68,15 @@ enum AudioSourceType: String, Codable {
 - Mic permission: `AVAudioApplication.requestRecordPermission()` (the old `AVAudioSession` API is deprecated).
 - Forward `AVAudioSession.interruptionNotification`, `routeChangeNotification`, and `mediaServicesWereResetNotification` to the state machine.
 
-### Future: BLEDeviceAudioSource
+### Omi Devkit 2 source (M12)
 
-Unchanged concept from v2: connect to a BLE wearable, decode Opus frames to 16 kHz mono, emit the same `AudioChunk`s. The phone still does all recording and transcription; a BLE dropout is just silence to the state machine. Adds one state — **Disconnected** (BLE source dropped, iOS audio session still healthy) — with auto-reconnect and offer-to-fall-back-to-phone-mic. Not built in MVP.
+Realizes the BLE source sketched above. Layering: `CoreBluetoothOmiTransport` (actor, owns `CBCentralManager`) → `OmiFrameAssembler` (packet reassembly, sequence-gap detection) → `OmiAudioDecoder` (Opus/PCM16/µ-law → `[Float]` 16 kHz mono; gaps and undecodable frames become silence-fill, never a crash or stalled stream — true PLC is a post-hardware-verification polish item) → `SampleChunker` (reused unchanged) → `OmiAudioSource : AudioSource`.
+
+`FailoverAudioSource : AudioSource` composes `OmiAudioSource` + `PhoneMicAudioSource` and presents a single `AudioChunk` stream; the pipeline cannot tell sources apart. Failover policy (`FailoverConfig` defaults): 3 s startup race (coverage starts on the phone mic if the Omi hasn't streamed by then), 3 s reconnect grace (a disconnect within this window causes no source switch), 10 s return hysteresis before switching back to a recovered Omi (flap damping). Every source switch finalizes the open segment — segment rollover — so no audio file mixes sources.
+
+**Selection model:** auto-prefer, no picker. `AppModel.performSetUp()` uses `FailoverAudioSource(omi:phoneMic:)` when an Omi is paired (`OmiDeviceStore`), otherwise constructs `PhoneMicAudioSource()` exactly as before — phone-mic-only behavior is byte-identical with no device paired. Settings only pairs/forgets; battery level and connection status are shown, firmware revision is not read (see design spec amendment — descoped as unused, char `2A26` is never touched).
+
+Full design: `docs/superpowers/specs/2026-07-06-omi-devkit2-audio-source-design.md` (see also its "Execution amendments (2026-07-07)" note).
 
 ---
 
@@ -567,7 +574,9 @@ Ruled out by collision checks (run 2026-07-03): **Earshot** (3+ live iOS apps), 
 │                                                                │
 │  AudioSource (protocol) ── PhoneMicAudioSource (MVP)            │
 │   │   AVAudioEngine tap @ hw format → AVAudioConverter          │
-│   │   [future: BLEDeviceSource (Opus→PCM), WatchSource]         │
+│   │   FailoverAudioSource(OmiAudioSource, PhoneMicAudioSource)  │
+│   │     — Omi Devkit 2 BLE source, auto-prefer + fallback (M12) │
+│   │   [future: WatchSource]                                     │
 │   ▼ AsyncStream<AudioChunk> ([Float] 4096 @16 kHz)              │
 │  VadManager (FluidAudio actor, Silero v6, ANE, bundled model)   │
 │   ▼ .speechStart / .speechEnd events                            │

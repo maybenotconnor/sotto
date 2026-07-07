@@ -7,9 +7,11 @@ import Foundation
 @MainActor
 protocol LiveActivityControlling: AnyObject {
     func sessionStarted(at date: Date)
-    /// M12: `sourceLabel` mirrors the pipeline's `activeSourceType.displayName` (nil pre-M12
-    /// or while nothing is capturing). Use the `update(phase:conversationCount:)` extension
-    /// overload below when the caller has no source label to report.
+    /// M12: `sourceLabel` mirrors the pipeline's `activeSourceType.displayName` (nil pre-M12,
+    /// while nothing is capturing, or — even while capturing — for a plain phone-mic-only
+    /// session with no Omi paired, since there's no source to switch between). Use the
+    /// `update(phase:conversationCount:)` extension overload below when the caller has no
+    /// source label to report.
     func update(phase: SottoActivityAttributes.Phase, conversationCount: Int, sourceLabel: String?)
     func sessionEnded()
     /// End every leftover activity from a previous process (iOS keeps them up to 8 h after

@@ -140,3 +140,8 @@ All automated tests run without hardware; `FakeOmiTransport` is the root fake.
 ## Attribution
 
 `Sotto/Omi/Vendored/` files carry MIT headers crediting "Based Hardware Contributors" (github.com/BasedHardware/omi, `sdks/swift`). swift-opus (BSD-3) added via SPM, pinned.
+
+## Execution amendments (2026-07-07)
+
+- **Firmware-revision Settings row descoped.** The transport never reads characteristic `2A26` (device info / firmware revision), and Settings shows only device name, connection status, and battery — no firmware row. `OmiConstants.firmwareRevisionCharacteristicUUID` exists as a documented constant but is unused. YAGNI: nothing in the failover or error-handling design depends on the firmware string; revisit if hardware bring-up needs it for debugging (e.g. distinguishing codec behavior across firmware versions).
+- **Failover thresholds shipped exactly as designed.** `FailoverConfig` defaults: `startupRace = 3s`, `reconnectGrace = 3s`, `returnHysteresis = 10s`. Segment rollover (finalize-on-switch) is implemented at every source transition as specified. Gap/decode-error concealment is silence-fill (not true PLC), per the codec-facts section's planning amendment above — unchanged by execution.
