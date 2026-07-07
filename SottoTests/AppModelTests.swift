@@ -244,6 +244,58 @@ struct AppModelTests {
         #expect(merged.contains("Second part text four five."))
     }
 
+    @Test func renameSegmentRewritesFileIndexAndHistory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RenameModelTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try ConversationMergerTests.partOne.write(
+            to: dir.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()   // no _day.json → rebuilds; entry is "done"
+        let entry = model.historySections[0].index.segments[0]
+        #expect(entry.title == nil)
+
+        await model.renameSegment(
+            m4aURL: dir.appendingPathComponent("09-15-30.m4a"),
+            title: "Morning standup", startTime: entry.startTime)
+
+        // File is the source of truth…
+        let file = try #require(TranscriptFile.parse(
+            url: dir.appendingPathComponent("09-15-30.md")))
+        #expect(file.title == "Morning standup")
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        // …index followed…
+        let indexed = await model.loadDayIndex(for: day)?.segments.first
+        #expect(indexed?.title == "Morning standup")
+        // …and the loaded history refreshed in place.
+        #expect(model.historySections[0].index.segments[0].title == "Morning standup")
+    }
+
+    @Test func renameSegmentWithMissingFileChangesNothing() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RenameMissingTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+
+        // No .md on disk → applyTitle fails → the index must never run ahead of the file.
+        await model.renameSegment(
+            m4aURL: root.appendingPathComponent("2026-03-14/09-15-30.m4a"),
+            title: "Ghost", startTime: Date())
+
+        #expect(model.historySections.isEmpty)
+    }
+
     @Test func mergeSegmentsReturnsFalseWithoutChangesOnAbort() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MergeAbortTests-\(UUID().uuidString)")
