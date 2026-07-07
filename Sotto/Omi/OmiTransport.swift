@@ -33,6 +33,9 @@ protocol OmiTransport: Sendable {
     /// Connect to the peripheral and MAINTAIN the connection (immediate pending
     /// re-connect on disconnect) until stopEvents(). Repeatable after stopEvents().
     func events(deviceID: UUID) async -> AsyncStream<OmiTransportEvent>
+    /// MUST finish the stream returned by `events(deviceID:)` on every path (including
+    /// when called while a connect is pending) — `OmiAudioSource.stop()` awaits its event
+    /// pump to completion and would hang forever on a transport that never finishes it.
     func stopEvents() async
 }
 
