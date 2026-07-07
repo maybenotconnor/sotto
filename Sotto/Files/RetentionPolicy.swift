@@ -29,49 +29,74 @@ struct SettingsStore: Sendable {
     }
 }
 
-/// M6b's Settings screen binds to these (ranges are UI-enforced there, not here). Settings
-/// changes apply on the NEXT Start/launch — SPEC "changes affect only future segments", not
-/// a listening session already in progress.
+/// Single source of truth for the Advanced listening settings' valid ranges and defaults.
+/// BOTH the Settings UI (Stepper/Slider `in:` ranges) and the `SettingsStore` getter clamps
+/// below read from here, so the two can never drift apart — raising a maximum in one place
+/// automatically applies to the other. Values are seconds except `vadThreshold` (0–1).
+enum SettingsBounds {
+    static let vadThreshold: ClosedRange<Float> = 0.1...0.9
+    static let vadThresholdDefault: Float = 0.6
+
+    static let silenceTimeout: ClosedRange<TimeInterval> = 15...600
+    static let silenceTimeoutDefault: TimeInterval = 45
+
+    static let minSegmentSpeech: ClosedRange<TimeInterval> = 1...60
+    static let minSegmentSpeechDefault: TimeInterval = 3
+
+    static let preRollSeconds: ClosedRange<TimeInterval> = 0.5...3.0
+    static let preRollSecondsDefault: TimeInterval = 1.0
+}
+
+extension ClosedRange {
+    /// Pins `value` into the range — the clamp used at every SettingsStore getter choke point.
+    func clamping(_ value: Bound) -> Bound {
+        Swift.min(Swift.max(value, lowerBound), upperBound)
+    }
+}
+
+/// M6b's Settings screen binds to these (ranges are UI-enforced there too, via SettingsBounds).
+/// Settings changes apply on the NEXT Start/launch — SPEC "changes affect only future
+/// segments", not a listening session already in progress.
 extension SettingsStore {
     /// Clamped at this getter choke point: corrupted/edited UserDefaults values (e.g. via
     /// the Simulator's `defaults write` or a synced-but-stale plist) must never reach
     /// RecorderStateMachine's preconditions — that would crash-loop before any UI can recover.
     var vadThreshold: Float {
         get {
-            guard defaults.object(forKey: "vadThreshold") != nil else { return 0.6 }
+            guard defaults.object(forKey: "vadThreshold") != nil else { return SettingsBounds.vadThresholdDefault }
             let value = defaults.float(forKey: "vadThreshold")
-            guard value.isFinite else { return 0.6 }
-            return min(max(value, 0.1), 0.9)
+            guard value.isFinite else { return SettingsBounds.vadThresholdDefault }
+            return SettingsBounds.vadThreshold.clamping(value)
         }
         nonmutating set { defaults.set(newValue, forKey: "vadThreshold") }
     }
 
     var silenceTimeout: TimeInterval {
         get {
-            guard defaults.object(forKey: "silenceTimeout") != nil else { return 45 }
+            guard defaults.object(forKey: "silenceTimeout") != nil else { return SettingsBounds.silenceTimeoutDefault }
             let value = defaults.double(forKey: "silenceTimeout")
-            guard value.isFinite else { return 45 }
-            return min(max(value, 15), 120)
+            guard value.isFinite else { return SettingsBounds.silenceTimeoutDefault }
+            return SettingsBounds.silenceTimeout.clamping(value)
         }
         nonmutating set { defaults.set(newValue, forKey: "silenceTimeout") }
     }
 
     var minSegmentSpeech: TimeInterval {
         get {
-            guard defaults.object(forKey: "minSegmentSpeech") != nil else { return 3 }
+            guard defaults.object(forKey: "minSegmentSpeech") != nil else { return SettingsBounds.minSegmentSpeechDefault }
             let value = defaults.double(forKey: "minSegmentSpeech")
-            guard value.isFinite else { return 3 }
-            return min(max(value, 1), 10)
+            guard value.isFinite else { return SettingsBounds.minSegmentSpeechDefault }
+            return SettingsBounds.minSegmentSpeech.clamping(value)
         }
         nonmutating set { defaults.set(newValue, forKey: "minSegmentSpeech") }
     }
 
     var preRollSeconds: TimeInterval {
         get {
-            guard defaults.object(forKey: "preRollSeconds") != nil else { return 1.0 }
+            guard defaults.object(forKey: "preRollSeconds") != nil else { return SettingsBounds.preRollSecondsDefault }
             let value = defaults.double(forKey: "preRollSeconds")
-            guard value.isFinite else { return 1.0 }
-            return min(max(value, 0.5), 3.0)
+            guard value.isFinite else { return SettingsBounds.preRollSecondsDefault }
+            return SettingsBounds.preRollSeconds.clamping(value)
         }
         nonmutating set { defaults.set(newValue, forKey: "preRollSeconds") }
     }

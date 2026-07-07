@@ -7,10 +7,10 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     let model: AppModel
 
-    @State private var vadThreshold: Float = 0.6
-    @State private var silenceTimeout: Double = 45
-    @State private var minSegment: Double = 3
-    @State private var preRoll: Double = 1.0
+    @State private var vadThreshold: Float = SettingsBounds.vadThresholdDefault
+    @State private var silenceTimeout: Double = SettingsBounds.silenceTimeoutDefault
+    @State private var minSegment: Double = SettingsBounds.minSegmentSpeechDefault
+    @State private var preRoll: Double = SettingsBounds.preRollSecondsDefault
     @State private var retention: AudioRetention = .deleteAfterTranscription
     @State private var engine: TranscriptionBackend = .speechAnalyzer
     @State private var wifiOnly = true
@@ -77,19 +77,23 @@ struct SettingsView: View {
             DisclosureGroup("Advanced", isExpanded: $showPowerUser) {
                 VStack(alignment: .leading) {
                     Text("Speech sensitivity")
-                    Slider(value: $vadThreshold, in: 0.1...0.9) { Text("Sensitivity") }
+                    Slider(value: $vadThreshold, in: SettingsBounds.vadThreshold) { Text("Sensitivity") }
                         minimumValueLabel: { Text("Sensitive").font(.caption2) }
                         maximumValueLabel: { Text("Strict").font(.caption2) }
                         .onChange(of: vadThreshold) { _, value in model.settings.vadThreshold = value }
-                    Button("Reset to default") { vadThreshold = 0.6; model.settings.vadThreshold = 0.6 }
+                    Button("Reset to default") {
+                        vadThreshold = SettingsBounds.vadThresholdDefault
+                        model.settings.vadThreshold = SettingsBounds.vadThresholdDefault
+                    }
                         .font(.footnote)
                 }
-                Stepper("Silence timeout: \(Int(silenceTimeout)) s", value: $silenceTimeout, in: 15...120, step: 5)
+                Stepper("Silence timeout: \(Int(silenceTimeout)) s",
+                        value: $silenceTimeout, in: SettingsBounds.silenceTimeout, step: 5)
                     .onChange(of: silenceTimeout) { _, value in model.settings.silenceTimeout = value }
                 Stepper("Pre-roll: \(preRoll, format: .number.precision(.fractionLength(1))) s",
-                        value: $preRoll, in: 0.5...3.0, step: 0.5)
+                        value: $preRoll, in: SettingsBounds.preRollSeconds, step: 0.5)
                     .onChange(of: preRoll) { _, value in model.settings.preRollSeconds = value }
-                Stepper("Min segment: \(Int(minSegment)) s", value: $minSegment, in: 1...10)
+                Stepper("Min segment: \(Int(minSegment)) s", value: $minSegment, in: SettingsBounds.minSegmentSpeech)
                     .onChange(of: minSegment) { _, value in model.settings.minSegmentSpeech = value }
                 Text("Changes apply after the app next launches.")
                     .font(.caption).foregroundStyle(.secondary)
