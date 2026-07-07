@@ -283,17 +283,33 @@ struct AppModelTests {
     @Test func renameSegmentWithMissingFileChangesNothing() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("RenameMissingTests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        try ConversationMergerTests.partOne.write(to: mdURL, atomically: true, encoding: .utf8)
+
         let model = AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
         await model.ensureSetUp()
+        await model.loadInitialHistory()   // index now holds one entry, title nil
+        #expect(model.historySections[0].index.segments[0].title == nil)
 
-        // No .md on disk → applyTitle fails → the index must never run ahead of the file.
+        // Delete the .md so applyTitle fails: the guard must stop the index from running
+        // ahead of the (now missing) source of truth.
+        try FileManager.default.removeItem(at: mdURL)
         await model.renameSegment(
-            m4aURL: root.appendingPathComponent("2026-03-14/09-15-30.m4a"),
+            m4aURL: dir.appendingPathComponent("09-15-30.m4a"),
             title: "Ghost", startTime: Date())
 
-        #expect(model.historySections.isEmpty)
+        // Index title still nil — this FAILS if the applyTitle guard is removed, because
+        // setTitle would then run despite the failed file write.
+        #expect(model.historySections[0].index.segments[0].title == nil)
+        #expect(await model.loadDayIndex(for: day)?.segments.first?.title == nil)
     }
 
     @Test func mergeSegmentsReturnsFalseWithoutChangesOnAbort() async throws {
