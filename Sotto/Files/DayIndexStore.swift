@@ -69,6 +69,12 @@ actor DayIndexStore {
         mutateEntry(for: m4aURL) { $0.hasAudio = false }
     }
 
+    /// Rename-conversation spec (2026-07-07): Detail-view retitle — title only; the
+    /// caller has already rewritten the .md (the source of truth) via `applyTitle`.
+    func setTitle(m4aURL: URL, title: String) {
+        mutateEntry(for: m4aURL) { $0.title = title }
+    }
+
     /// Row-level deletion (List swipe-delete / Detail delete): unlike `setAudioRemoved`
     /// (retention: keeps the transcript, just marks audio gone), this drops the entry
     /// outright — the caller has removed both the .m4a and .md for this segment.

@@ -140,16 +140,7 @@ enum ConversationMerger {
 
         var front = file.frontmatter
         front["title"] = sanitizedTitle
-        var lines = ["---"]
-        let canonical = ["date", "duration", "speechEnd", "backend", "speakers", "title"]
-        for key in canonical {
-            if let value = front[key] { lines.append("\(key): \(value)") }
-        }
-        // Unknown keys (hand-edited files — the folder is user-exposed) survive, sorted.
-        for key in front.keys.filter({ !canonical.contains($0) }).sorted() {
-            lines.append("\(key): \(front[key]!)")
-        }
-        lines.append("---")
+        var lines = frontmatterLines(front)
         lines.append("")
         let headingTime = timeFormatter.string(from: startTime)
         lines.append("# \(sanitizedTitle ?? "Conversation") — \(headingTime)")
@@ -175,6 +166,60 @@ enum ConversationMerger {
         // partBody, not file.transcriptBody: a pre-notes-shape merged file still carries
         // its H1 inside transcriptBody, and the H1 is re-emitted above with the title.
         lines.append(partBody(file))
+        lines.append("")
+        do {
+            try lines.joined(separator: "\n").write(to: mdURL, atomically: true, encoding: .utf8)
+        } catch {
+            return false
+        }
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: mdURL.path)
+        return true
+    }
+
+    /// Canonical frontmatter rendering shared by `applyNotes`/`applyTitle` — the writer's
+    /// key order (TranscriptMarkdownWriter puts `source` before `speakers`), with unknown
+    /// keys (hand-edited files — the folder is user-exposed) surviving at the end, sorted.
+    private static func frontmatterLines(_ front: [String: String]) -> [String] {
+        var lines = ["---"]
+        let canonical = ["date", "duration", "speechEnd", "backend", "source", "speakers", "title"]
+        for key in canonical {
+            if let value = front[key] { lines.append("\(key): \(value)") }
+        }
+        for key in front.keys.filter({ !canonical.contains($0) }).sorted() {
+            lines.append("\(key): \(front[key]!)")
+        }
+        lines.append("---")
+        return lines
+    }
+
+    // MARK: - Rename (2026-07-07 spec)
+
+    /// User retitle from the Detail view. Sets `title:` frontmatter and re-renders the H1
+    /// with the ORIGINAL start time; everything else in the body — Summary, action items,
+    /// Transcript, gap markers — survives verbatim (unlike `applyNotes`, which re-renders
+    /// the section structure). Same sanitizer choke point as model output. Returns false
+    /// when the title sanitizes to empty or the file can't be parsed/written.
+    @discardableResult
+    static func applyTitle(to mdURL: URL, title: String, startTime: Date) -> Bool {
+        guard let file = TranscriptFile.parse(url: mdURL) else { return false }
+        let sanitized = TranscriptMarkdownWriter.sanitizeInline(title)
+        guard !sanitized.isEmpty else { return false }
+
+        var front = file.frontmatter
+        front["title"] = sanitized
+        var lines = frontmatterLines(front)
+        lines.append("")
+        let heading = "# \(sanitized) — \(timeFormatter.string(from: startTime))"
+        // "# " matches the H1 only, never "## " section headings.
+        var bodyLines = file.body.components(separatedBy: "\n")
+        if let h1 = bodyLines.firstIndex(where: { $0.hasPrefix("# ") }) {
+            bodyLines[h1] = heading
+        } else {
+            bodyLines.insert(contentsOf: [heading, ""], at: 0)
+        }
+        lines.append(contentsOf: bodyLines)
         lines.append("")
         do {
             try lines.joined(separator: "\n").write(to: mdURL, atomically: true, encoding: .utf8)

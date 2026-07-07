@@ -11,24 +11,35 @@ struct ConversationDetailView: View {
     @State private var player = AudioPlayerController()
     @State private var audioExists = false
     @State private var confirmDelete = false
+    // Rename (2026-07-07 spec): nav-title binding + last-persisted value. `savedTitle`
+    // is what commit no-ops and reverts compare against — it starts as the same
+    // title-or-time fallback the static navigationTitle used to show.
+    @State private var editableTitle = ""
+    @State private var savedTitle = ""
     @Environment(\.dismiss) private var dismiss
 
     private var m4aURL: URL { dayDirectory.appendingPathComponent("\(entry.id).m4a") }
     private var mdURL: URL { dayDirectory.appendingPathComponent("\(entry.id).md") }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                metadataRow
-                if audioExists { playerControls }
-                transcriptBody
+        Group {
+            if transcript != nil {
+                mainContent
+                    .navigationTitle($editableTitle)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .onChange(of: editableTitle) { _, newValue in
+                        commitRename(newValue)
+                    }
+            } else {
+                mainContent
+                    .navigationTitle(
+                        entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
             }
-            .padding()
         }
-        .navigationTitle(entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
-        .toolbar { toolbarContent }
         .task {
             transcript = TranscriptFile.parse(url: mdURL)
+            savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
+            editableTitle = savedTitle
             // hasAudio is advisory (M5 review): stat the file before offering playback.
             audioExists = FileManager.default.fileExists(atPath: m4aURL.path)
             if audioExists { player.load(url: m4aURL) }
@@ -41,6 +52,38 @@ struct ConversationDetailView: View {
                     dismiss()
                 }
             }
+        }
+    }
+
+    private var mainContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                metadataRow
+                if audioExists { playerControls }
+                transcriptBody
+            }
+            .padding()
+        }
+        .toolbar { toolbarContent }
+    }
+
+    /// Commit rule (spec): persist only a non-empty value that differs from what was
+    /// displayed. Unchanged commits (including the seeding write in `.task`) and inputs
+    /// that trim/sanitize to empty revert silently — this also keeps the time placeholder
+    /// from being persisted as a literal title.
+    private func commitRename(_ newValue: String) {
+        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != savedTitle else { return }
+        let sanitized = TranscriptMarkdownWriter.sanitizeInline(trimmed)
+        guard !sanitized.isEmpty else {
+            editableTitle = savedTitle
+            return
+        }
+        savedTitle = sanitized
+        editableTitle = sanitized   // reflect sanitization; re-entry no-ops via the guard
+        Task {
+            await model.renameSegment(
+                m4aURL: m4aURL, title: sanitized, startTime: entry.startTime)
         }
     }
 

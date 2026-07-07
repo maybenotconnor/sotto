@@ -73,6 +73,7 @@ Follows the `regenerateNotes` precedent:
 | Title sanitizes to empty | Rename aborted, UI reverts |
 | Mirror export fails | Silent best-effort; local state is truth |
 | Crash between file write and index update | Index shows stale title until next rebuild/update — same "keep-stale by design" precedent as notes |
+| Re-transcribe after rename | Title dropped. Re-transcribe rewrites the `.md` from scratch (`TranscriptMarkdownWriter`) and re-adds a `title:` only if notes regeneration produces one — a user rename is lost identically to a model-generated title. Consistent with "indistinguishable from an M8 title"; not special-cased. |
 
 ## Testing
 

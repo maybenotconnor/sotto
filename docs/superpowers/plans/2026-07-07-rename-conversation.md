@@ -95,10 +95,14 @@ Append inside `struct ConversationMergerTests` (before the closing brace):
         #expect(ok)
         let file = try #require(TranscriptFile.parse(url: mdURL))
         #expect(file.title == "Morning standup")
+        // Exactly ONE heading — replaced in place; and NO section headings minted: a
+        // pre-M8 plain-body file keeps its shape (its transcriptBody legitimately still
+        // carries the H1, exactly as before the rename).
         let started = timeFormatter.string(from: startTime)
-        #expect(file.body.components(separatedBy: "\n")
-            .contains("# Morning standup — \(started)"))
-        #expect(file.transcriptBody == "First part text one two three.")
+        let headings = file.body.components(separatedBy: "\n").filter { $0.hasPrefix("# ") }
+        #expect(headings == ["# Morning standup — \(started)"])
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        #expect(!file.body.contains("## Transcript"))
     }
 
     @Test func applyTitleSanitizesUserInputAndRejectsEmpty() async throws {
@@ -355,7 +359,9 @@ Append to `SottoTests/AppModelTests.swift` (mirrors `mergeSegmentsCombinesFilesI
         let file = try #require(TranscriptFile.parse(
             url: dir.appendingPathComponent("09-15-30.md")))
         #expect(file.title == "Morning standup")
-        #expect(file.transcriptBody == "First part text one two three.")
+        // .contains, not ==: a pre-M8 plain-body file's transcriptBody legitimately
+        // includes the H1 (no ## Transcript section) — same shape ruling as Task 1.
+        #expect(file.transcriptBody.contains("First part text one two three."))
         // …index followed…
         let indexed = await model.loadDayIndex(for: day)?.segments.first
         #expect(indexed?.title == "Morning standup")

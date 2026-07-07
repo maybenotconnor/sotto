@@ -382,4 +382,111 @@ struct ConversationMergerTests {
         // Block sanitizer defanged the injected section heading.
         #expect(file.summary?.contains("## Transcript") == false)
     }
+
+    // A merged-and-noted file: title frontmatter, titled H1, Summary + Transcript sections,
+    // plus a hand-edited unknown key — the hardest shape applyTitle must preserve.
+    static let notedFile = """
+    ---
+    date: 2026-03-14T09:15:30-04:00
+    duration: 270
+    speechEnd: 2026-03-14T09:20:00-04:00
+    backend: speechAnalyzer
+    title: Planning the launch
+    obsidian-tag: keepme
+    ---
+
+    # Planning the launch — 9:15 AM
+
+    ## Summary
+
+    We planned the launch.
+
+    ## Transcript
+
+    First part text one two three.
+    """
+
+    @Test func applyTitleReplacesTitleAndHeadingPreservingEverythingElse() async throws {
+        let dir = try makeDay([("09-15-30", Self.notedFile)])
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        let startTime = DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0].startTime
+
+        let ok = ConversationMerger.applyTitle(
+            to: mdURL, title: "Launch retro", startTime: startTime)
+
+        #expect(ok)
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        #expect(file.title == "Launch retro")
+        // Untouched frontmatter — canonical and hand-edited unknown keys alike — survives.
+        #expect(file.frontmatter["date"] == "2026-03-14T09:15:30-04:00")
+        #expect(file.frontmatter["duration"] == "270")
+        #expect(file.frontmatter["speechEnd"] == "2026-03-14T09:20:00-04:00")
+        #expect(file.frontmatter["backend"] == "speechAnalyzer")
+        #expect(file.frontmatter["obsidian-tag"] == "keepme")
+        #expect(file.frontmatter.count == 6)
+        // H1 re-rendered with the ORIGINAL start time; sections preserved verbatim.
+        let started = timeFormatter.string(from: startTime)
+        let headings = file.body.components(separatedBy: "\n").filter { $0.hasPrefix("# ") }
+        #expect(headings == ["# Launch retro — \(started)"])
+        #expect(file.summary == "We planned the launch.")
+        #expect(file.transcriptBody == "First part text one two three.")
+    }
+
+    @Test func applyTitleTitlesAPreviouslyUntitledFile() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne)])   // no title, plain body
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        let startTime = DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0].startTime
+
+        let ok = ConversationMerger.applyTitle(
+            to: mdURL, title: "Morning standup", startTime: startTime)
+
+        #expect(ok)
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        #expect(file.title == "Morning standup")
+        let started = timeFormatter.string(from: startTime)
+        // Exactly ONE heading — replaced in place; and NO section headings minted: a
+        // pre-M8 plain-body file keeps its shape (its transcriptBody legitimately still
+        // carries the H1, exactly as before the rename).
+        let headings = file.body.components(separatedBy: "\n").filter { $0.hasPrefix("# ") }
+        #expect(headings == ["# Morning standup — \(started)"])
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        #expect(!file.body.contains("## Transcript"))
+    }
+
+    @Test func applyTitleSanitizesUserInputAndRejectsEmpty() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne)])
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        let startTime = DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0].startTime
+
+        // Newline collapsed — user input cannot mint frontmatter keys (same choke point
+        // as model output).
+        #expect(ConversationMerger.applyTitle(
+            to: mdURL, title: "Evil\ntitle: injected", startTime: startTime))
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        #expect(file.title == "Evil title: injected")
+
+        // Sanitizes-to-empty aborts: file untouched.
+        let before = try String(contentsOf: mdURL, encoding: .utf8)
+        #expect(!ConversationMerger.applyTitle(to: mdURL, title: "###", startTime: startTime))
+        #expect(try String(contentsOf: mdURL, encoding: .utf8) == before)
+
+        // Missing file aborts.
+        #expect(!ConversationMerger.applyTitle(
+            to: dir.appendingPathComponent("nope.md"), title: "X", startTime: startTime))
+    }
+
+    @Test func applyTitleSurvivesIndexRebuild() async throws {
+        let dir = try makeDay([("09-15-30", Self.notedFile)])
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+        let rebuilt = DayIndexRebuilder.rebuild(dayDirectory: dir)
+
+        _ = ConversationMerger.applyTitle(
+            to: mdURL, title: "Launch retro", startTime: rebuilt.segments[0].startTime)
+
+        // The rename lives in frontmatter, so a lost _day.json reproduces it — and the
+        // rebuilt word count is unchanged (title is not transcript text).
+        let after = DayIndexRebuilder.rebuild(dayDirectory: dir).segments[0]
+        #expect(after.title == "Launch retro")
+        #expect(after.wordCount == rebuilt.segments[0].wordCount)
+    }
 }

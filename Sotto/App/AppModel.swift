@@ -382,6 +382,25 @@ final class AppModel {
         await refreshLoadedHistory()
     }
 
+    /// Rename-conversation spec (2026-07-07): Detail-view retitle. The .md is the source
+    /// of truth — rewrite it first; if that fails (file gone, title sanitizes to empty)
+    /// the index is never touched. Then the same choreography as `regenerateNotes`:
+    /// index title, best-effort detached mirror export, history refresh. PreviewCache is
+    /// NOT invalidated — previews derive from summary/transcript text, which a rename
+    /// never changes.
+    func renameSegment(m4aURL: URL, title: String, startTime: Date) async {
+        let mdURL = m4aURL.deletingPathExtension().appendingPathExtension("md")
+        guard ConversationMerger.applyTitle(to: mdURL, title: title, startTime: startTime)
+        else { return }
+        await dayIndex?.setTitle(m4aURL: m4aURL, title: title)
+        if let destination = SyncDestinationStore().resolve() {
+            Task.detached(priority: .utility) {
+                SegmentExporter.export(m4aURL: m4aURL, to: destination)
+            }
+        }
+        await refreshLoadedHistory()
+    }
+
     /// Merge-conversations orchestration (spec 2026-07-06): file-level merge, then index
     /// update, queue/cache cleanup, best-effort mirror sync, history refresh, and
     /// best-effort notes regeneration. Returns false when the merge aborted — nothing on
