@@ -22,16 +22,20 @@ struct SettingsView: View {
     @State private var showSyncFolderPicker = false
     @State private var syncFolderName: String?
     @State private var exportAllResult: String?
+    @State private var showPairSheet = false
+    @State private var showForgetConfirm = false
 
     var body: some View {
         Form {
             listeningSection
+            omiSection
             transcriptionSection
             storageSection
             notificationsSection
             aboutSection
         }
         .navigationTitle("Settings")
+        .sheet(isPresented: $showPairSheet) { OmiPairSheet(model: model) }
         .fileImporter(isPresented: $showSyncFolderPicker, allowedContentTypes: [.folder]) { result in
             guard case .success(let url) = result else { return }
             do {
@@ -65,7 +69,11 @@ struct SettingsView: View {
 
     private var listeningSection: some View {
         Section("Listening") {
-            LabeledContent("Audio source", value: "Phone microphone")
+            if let name = model.pairedOmiName {
+                LabeledContent("Audio source", value: "\(name) + iPhone mic fallback")
+            } else {
+                LabeledContent("Audio source", value: "iPhone microphone")
+            }
             DisclosureGroup("Advanced", isExpanded: $showPowerUser) {
                 VStack(alignment: .leading) {
                     Text("Speech sensitivity")
@@ -86,6 +94,49 @@ struct SettingsView: View {
                 Text("Changes apply after the app next launches.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// M12 Settings (Task 11): pairing status + pair/forget actions for an Omi wearable.
+    /// Pair/forget take effect immediately if nothing is listening, otherwise after the
+    /// current session ends (`AppModel.rebuildPipelineIfIdle`) — mirrors the existing
+    /// "Changes apply..." convention used for the Advanced listening settings above.
+    private var omiSection: some View {
+        Section("Omi Device") {
+            if let name = model.pairedOmiName {
+                LabeledContent("Device", value: name)
+                LabeledContent("Status", value: omiStatusLabel)
+                if let battery = model.omiBatteryLevel {
+                    LabeledContent("Battery", value: "\(battery)%")
+                }
+                if let failure = model.omiSetupFailure {
+                    Text(failure).font(.caption).foregroundStyle(.red)
+                }
+                Button("Forget This Device", role: .destructive) { showForgetConfirm = true }
+                    .confirmationDialog("Forget \(name)?", isPresented: $showForgetConfirm) {
+                        Button("Forget", role: .destructive) { Task { await model.forgetOmi() } }
+                    } message: {
+                        Text("Sotto will stop connecting to it and use the iPhone microphone.")
+                    }
+                Text("Takes effect right away if nothing's listening, otherwise after the current session ends.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button("Pair Omi Device…") { showPairSheet = true }
+                Text("Wear an Omi pendant and Sotto records from it automatically, falling back to the iPhone mic when it's out of range.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var omiStatusLabel: String {
+        switch model.omiConnectionState {
+        case .streaming: "Streaming"
+        case .connected: "Connected"
+        case .connecting: "Connecting…"
+        case .disconnected, nil: "Not connected"
+        case .unavailable(.poweredOff): "Bluetooth is off"
+        case .unavailable(.unauthorized): "Bluetooth permission needed"
+        case .unavailable(.unsupported): "Bluetooth unavailable"
         }
     }
 
