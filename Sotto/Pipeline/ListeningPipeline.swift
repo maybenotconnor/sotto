@@ -93,6 +93,20 @@ final class ListeningPipeline {
         guard status == .idle, !isTransitioning else { return }
         isTransitioning = true
         status = .starting   // truthful: no audio flows until source.start() succeeds
+        // Subscribe to source changes BEFORE source.start(): sourceChanges() registers its
+        // continuation on first demand inside this task, and a change emitted before that
+        // registration goes to zero continuations and is LOST — including the very first
+        // activation when the source resolves fast (Omi already streaming at startup), which
+        // would leave activeSourceType nil and the recorder's source label stale for the
+        // whole session. Creating the task here enqueues it ahead of start()'s resume on the
+        // MainActor, so the subscription lands before any event the started source can emit.
+        if let switching = source as? any SourceSwitchingAudioSource {
+            sourceEventTask = Task { [weak self] in
+                for await change in await switching.sourceChanges() {
+                    await self?.handleSourceChange(change)
+                }
+            }
+        }
         do {
             let stream = try await source.start()
             let snapshot = await recorder.beginListening()
@@ -103,13 +117,7 @@ final class ListeningPipeline {
                     await self?.handle(chunk)
                 }
             }
-            if let switching = source as? any SourceSwitchingAudioSource {
-                sourceEventTask = Task { [weak self] in
-                    for await change in await switching.sourceChanges() {
-                        await self?.handleSourceChange(change)
-                    }
-                }
-            } else {
+            if !(source is any SourceSwitchingAudioSource) {
                 activeSourceType = source.sourceType
                 Task { await recorder.setActiveSource(source.sourceType) }
             }
@@ -118,6 +126,11 @@ final class ListeningPipeline {
             liveActivity?.sessionStarted(at: Date())
         } catch {
             status = .idle
+            // The source never started, so no change is mid-handleSourceChange; cancellation
+            // IS honored at the for-await's suspension point (the drain-before-finalize rule
+            // in performHalt exists for bodies already resumed, which can't exist here).
+            sourceEventTask?.cancel()
+            sourceEventTask = nil
             log("Start failed: \(error)")
         }
         isTransitioning = false
@@ -185,6 +198,16 @@ final class ListeningPipeline {
         // Full defensive stop first: after iOS killed the engine, the source still holds a
         // non-nil engine and would throw alreadyStarted (M1 contract).
         await source.stop()
+        // Subscribe BEFORE source.start() (see start() for the lost-first-event rationale) —
+        // but AFTER the defensive stop above, which finishes any previously registered
+        // change continuations.
+        if let switching = source as? any SourceSwitchingAudioSource {
+            sourceEventTask = Task { [weak self] in
+                for await change in await switching.sourceChanges() {
+                    await self?.handleSourceChange(change)
+                }
+            }
+        }
         do {
             let stream = try await source.start()
             let snapshot = await recorder.beginListening()
@@ -196,19 +219,15 @@ final class ListeningPipeline {
                     await self?.handle(chunk)
                 }
             }
-            if let switching = source as? any SourceSwitchingAudioSource {
-                sourceEventTask = Task { [weak self] in
-                    for await change in await switching.sourceChanges() {
-                        await self?.handleSourceChange(change)
-                    }
-                }
-            } else {
+            if !(source is any SourceSwitchingAudioSource) {
                 activeSourceType = source.sourceType
                 Task { await recorder.setActiveSource(source.sourceType) }
             }
             await notifications?.cancelPausedNotification()
         } catch {
             status = .interrupted
+            sourceEventTask?.cancel()   // see start()'s catch: no body can be in flight here
+            sourceEventTask = nil
             log("Resume failed: \(error)")
         }
         isTransitioning = false

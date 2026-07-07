@@ -137,6 +137,20 @@ struct ListeningPipelineSourceTests {
         await pipeline.stop()
     }
 
+    /// Polls `condition` every 20ms until it holds or `timeout` elapses; returns whether it
+    /// was ultimately met. Deterministic setup waits instead of fixed sleeps: the happy path
+    /// stays fast, and a scheduler starved by full-suite load can't flake a precondition.
+    @discardableResult
+    private func waitUntil(timeout: Duration = .seconds(3),
+                           _ condition: @MainActor () async -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return await condition()
+    }
+
     /// Recorder whose `rollover(to:)` sleeps briefly before returning — widens the window in
     /// which a `handleSourceChange` call is genuinely in flight (suspended on the recorder
     /// hop) so `stopAfterBufferedSourceChangeEndsIdle` below can land `stop()` inside that
@@ -187,23 +201,25 @@ struct ListeningPipelineSourceTests {
         let pipeline = ListeningPipeline(source: failover, recorder: recorder)
         await pipeline.start()
         await omi.setState(.streaming)
-        // Poll rather than a single fixed sleep: this setup step was observed (independent of
-        // the regression below) to occasionally need multiple seconds of wall-clock scheduling
-        // slack under load — polling stays fast in the common case and still tolerates a slow
-        // scheduler without an even longer fixed delay.
-        for _ in 0..<150 where pipeline.activeSourceType != .omi {
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        // Deterministic setup wait (not a fixed sleep): relies on start() subscribing to
+        // sourceChanges() BEFORE source.start() — with the old subscribe-after-start order,
+        // this first activation event could be emitted to zero continuations and lost forever,
+        // making no wait long enough (the root cause of a rare setup flake under load).
+        let sawOmi = await waitUntil { pipeline.activeSourceType == .omi }
+        #expect(sawOmi, "setup: pipeline never observed .omi as the active source")
         #expect(pipeline.activeSourceType == .omi)
 
         await omi.setState(.disconnected)               // arms reconnectGrace (60ms)
-        // Let grace fire and phoneMic activate/emit (near-instant), and the pipeline's
-        // sourceEventTask start processing that buffered change — its recorder.rollover(to:)
-        // call is now sleeping for 150ms, so at the 100ms mark it is reliably still in flight.
-        try await Task.sleep(for: .milliseconds(100))
+        // Grace fires -> phoneMic activates -> .omiDisconnected emitted -> pipeline's
+        // handleSourceChange enters recorder.rollover(to:), which appends to rolloverCalls
+        // FIRST and then blocks for 150ms. Waiting on the append (20ms poll) instead of a
+        // fixed sleep guarantees stop() lands while the change is genuinely in flight, with
+        // >=130ms of margin left in the rollover delay.
+        let rolloverInFlight = await waitUntil { !(await recorder.rolloverCalls.isEmpty) }
+        #expect(rolloverInFlight, "setup: rollover never started after Omi disconnect")
         await pipeline.stop()                           // races the in-flight change vs finalize
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(pipeline.status == .idle)
+        try await Task.sleep(for: .milliseconds(300))   // observation window, not a setup wait:
+        #expect(pipeline.status == .idle)               // a revert would land in here pre-fix
         #expect(pipeline.activeSourceType == nil)
         try await Task.sleep(for: .milliseconds(200))   // recheck: must not revert later either
         #expect(pipeline.status == .idle)
