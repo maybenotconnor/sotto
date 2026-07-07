@@ -60,6 +60,20 @@ final class AppModel {
         return .eligible(dayDirectory: picked[0].section.dayDirectory, entries: entries)
     }
 
+    /// M12 Task 12 (home banner): the Bluetooth-off/unauthorized banner shows only when an
+    /// Omi is actually paired (unpaired users never see Bluetooth chatter) AND the reason is
+    /// one the user can act on via Settings — `.unsupported` has no Settings toggle to fix,
+    /// so it's deliberately excluded here (Settings' `omiStatusLabel` still surfaces it as
+    /// status text, just not as an actionable banner).
+    nonisolated static func bluetoothBannerReason(
+        pairedOmiName: String?, connectionState: OmiConnectionState?
+    ) -> OmiBluetoothUnavailableReason? {
+        guard pairedOmiName != nil, case .unavailable(let reason) = connectionState,
+              reason == .poweredOff || reason == .unauthorized
+        else { return nil }
+        return reason
+    }
+
     /// M6b Settings "Storage" section: on-disk footprint split by kind, walked live rather
     /// than tracked incrementally (this repo's file counts are small; a full walk is cheap
     /// and can never drift from the true on-disk state).

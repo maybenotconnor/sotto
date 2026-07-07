@@ -50,6 +50,11 @@ struct ConversationDetailView: View {
                   systemImage: entry.backend == "deepgram" ? "cloud" : "iphone")
             if let words = entry.wordCount { Text("\(words) words") }
             Text("\(Int(entry.duration / 60)) min")
+            // M12 Task 12: nil means phone mic (pre-M12 files and phone-mic-only entries
+            // alike) — no chip in that case, only shown when a non-default source is known.
+            if let source = entry.source {
+                Label(AudioSourceType(rawValue: source)?.displayName ?? source, systemImage: "waveform")
+            }
         }
         .font(.footnote)
         .foregroundStyle(.secondary)

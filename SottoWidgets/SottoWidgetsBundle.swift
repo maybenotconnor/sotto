@@ -64,6 +64,13 @@ struct SottoLiveActivityWidget: Widget {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // M12 Task 12: one caption, only when a source is known (nil pre-M12 or
+                    // phone-mic-only sessions) — lock-screen space is tight.
+                    if let sourceLabel = context.state.sourceLabel {
+                        Text(sourceLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 Button(intent: ToggleListeningIntent()) {

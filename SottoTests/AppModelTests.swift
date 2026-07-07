@@ -180,6 +180,30 @@ struct AppModelTests {
             sections: sections) == .tooFew)
     }
 
+    @Test func bluetoothBannerReasonOnlyForPairedActionableUnavailability() {
+        // Unpaired: never shown, regardless of connection state.
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: nil, connectionState: .unavailable(.poweredOff)) == nil)
+
+        // Paired but connected/streaming/disconnected/nil: nothing actionable to surface.
+        #expect(AppModel.bluetoothBannerReason(pairedOmiName: "Omi", connectionState: nil) == nil)
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: "Omi", connectionState: .connected) == nil)
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: "Omi", connectionState: .disconnected) == nil)
+
+        // Paired + unsupported: excluded — no Settings toggle can fix it, so it isn't an
+        // actionable banner (Settings' status text still surfaces it separately).
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: "Omi", connectionState: .unavailable(.unsupported)) == nil)
+
+        // Paired + poweredOff/unauthorized: the two actionable reasons the banner covers.
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: "Omi", connectionState: .unavailable(.poweredOff)) == .poweredOff)
+        #expect(AppModel.bluetoothBannerReason(
+            pairedOmiName: "Omi", connectionState: .unavailable(.unauthorized)) == .unauthorized)
+    }
+
     @Test func mergeSegmentsCombinesFilesIndexAndHistory() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MergeModelTests-\(UUID().uuidString)")

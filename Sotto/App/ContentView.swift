@@ -273,7 +273,13 @@ private struct HomeScreen: View {
                 Circle().fill(headerState.dotColor).frame(width: 12, height: 12)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(headerState.label).font(.headline)
+                // M12 Task 12: source suffix only when an Omi is paired — phone-mic-only
+                // users see the exact same label as before (SPEC "UI & surfacing").
+                if let source = pipeline.activeSourceType, model.pairedOmiName != nil {
+                    Text("\(headerState.label) · \(source.displayName)").font(.headline)
+                } else {
+                    Text(headerState.label).font(.headline)
+                }
                 if let timerStart = headerState.timerStart {
                     Text(timerStart, style: .timer)
                         .font(.caption.monospacedDigit())
@@ -336,6 +342,25 @@ private struct HomeScreen: View {
             VStack(spacing: 6) {
                 NoticeBanner(
                     text: "Microphone access is off. Sotto can't listen without it.",
+                    color: .red)
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                .font(.footnote.bold())
+            }
+        }
+        // M12 Task 12: same visual weight as micDenied above — full text + action button,
+        // stacked. Only for paired users (SPEC "UI & surfacing"); capture continues on the
+        // phone mic regardless, so this is informational, not blocking.
+        if let reason = AppModel.bluetoothBannerReason(
+            pairedOmiName: model.pairedOmiName, connectionState: model.omiConnectionState) {
+            VStack(spacing: 6) {
+                NoticeBanner(
+                    text: reason == .poweredOff
+                        ? "Bluetooth is off — your Omi can't connect. Recording uses the iPhone mic."
+                        : "Sotto needs Bluetooth permission to use your Omi. Recording uses the iPhone mic.",
                     color: .red)
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
