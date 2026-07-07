@@ -3,10 +3,11 @@ import SwiftUI
 /// Settings "Pair Omi Device…" (Task 11): scans for Omi devices (by service UUID, see
 /// `CoreBluetoothOmiTransport`) and pairs the tapped one.
 ///
-/// The sheet owns its transport's scan lifecycle: `Task.cancel()` alone is inert on a plain
-/// `for await` over an `AsyncStream` (the loop only ends when the stream finishes), so
-/// `withTaskCancellationHandler` explicitly calls `stopScan()` when the sheet's `.task` is
-/// cancelled (dismiss or cancel) — otherwise Core Bluetooth would keep scanning in the
+/// The sheet owns its transport's scan lifecycle: relying on cancellation of the `.task` alone
+/// wouldn't stop Core Bluetooth from scanning (the `for await` loop only ends when the stream
+/// itself finishes, and we want scanning to actually stop, not just the loop to stop consuming
+/// it), so `withTaskCancellationHandler` explicitly calls `stopScan()` when the sheet's `.task`
+/// is cancelled (dismiss or cancel) — otherwise Core Bluetooth would keep scanning in the
 /// background for as long as the transport instance lives.
 struct OmiPairSheet: View {
     let model: AppModel

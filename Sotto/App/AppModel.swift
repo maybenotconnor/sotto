@@ -109,6 +109,11 @@ final class AppModel {
     /// Test seam mirroring `segmentRootOverride`: when set, Omi pairing reads/writes this
     /// store instead of `UserDefaults.standard`.
     private let omiStoreOverride: OmiDeviceStore?
+    /// Test seam mirroring `omiStoreOverride`: when set, `composePipeline` builds the paired
+    /// Omi's `OmiAudioSource` over this transport instead of a real `CoreBluetoothOmiTransport`
+    /// — lets tests drive connection/battery events (e.g. the Critical #1 re-subscribe-across-
+    /// sessions regression test) with no Bluetooth hardware involved.
+    private let omiTransportOverride: (any OmiTransport)?
     /// M12: the long-lived recorder built once in `performSetUp` — reused (not
     /// reconstructed) by `rebuildPipelineIfIdle()` so a pair/forget mid-app-life doesn't pay
     /// for a second CoreML detector load and, more importantly, doesn't stand up a second
@@ -117,6 +122,12 @@ final class AppModel {
     private var recorder: RecorderStateMachine?
     /// M12 pairing (Settings, Task 11): the currently paired Omi's display name, or nil.
     private(set) var pairedOmiName: String?
+    /// M12 final review Important #2: whether the CURRENTLY COMPOSED pipeline's source
+    /// includes the Omi failover branch — i.e. what `composePipeline` last built, as opposed
+    /// to `omiStoreOverride`'s (or the real store's) present pairing state, which a mid-session
+    /// pair/forget can move out ahead of. `rebuildIfSourceShapeChanged()` diffs the two to
+    /// decide whether a deferred rebuild is owed once the session ends.
+    private(set) var composedWithOmi = false
     private(set) var omiBatteryLevel: Int?
     private(set) var omiConnectionState: OmiConnectionState?
     private(set) var omiSetupFailure: String?
@@ -161,12 +172,14 @@ final class AppModel {
         assetInstaller: (any SpeechAssetInstalling)? = nil,
         networkMonitor: (any NetworkMonitoring)? = nil,
         segmentRootOverride: URL? = nil,
-        omiStoreOverride: OmiDeviceStore? = nil
+        omiStoreOverride: OmiDeviceStore? = nil,
+        omiTransportOverride: (any OmiTransport)? = nil
     ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
         self.networkMonitor = networkMonitor ?? WiFiMonitor()
         self.segmentRootOverride = segmentRootOverride
         self.omiStoreOverride = omiStoreOverride
+        self.omiTransportOverride = omiTransportOverride
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
@@ -785,15 +798,18 @@ final class AppModel {
         var plainPhoneMic: PhoneMicAudioSource?
         let source: any AudioSource
         if let paired = omiStore.device {
-            let omi = OmiAudioSource(transport: CoreBluetoothOmiTransport(), deviceID: paired.id)
+            let omi = OmiAudioSource(
+                transport: omiTransportOverride ?? CoreBluetoothOmiTransport(), deviceID: paired.id)
             omiSource = omi
             source = FailoverAudioSource(omi: omi, phoneMic: PhoneMicAudioSource())
             pairedOmiName = paired.name
+            composedWithOmi = true
         } else {
             let phoneMic = PhoneMicAudioSource()
             plainPhoneMic = phoneMic
             source = phoneMic
             pairedOmiName = nil
+            composedWithOmi = false
         }
 
         let newPipeline = ListeningPipeline(
@@ -848,24 +864,41 @@ final class AppModel {
         observer = sessionObserver
 
         // Battery + connection observation (Settings, Task 11): only meaningful when an Omi
-        // is actually composed into the source. Subscribes immediately — independent of
-        // whether/when the pipeline is ever `start()`-ed — so Settings can show live
-        // connecting/streaming state without requiring an active recording session.
+        // is actually composed into the source. There is no BLE traffic — and so nothing for
+        // these streams to carry — until the pipeline is actually `start()`-ed (that's what
+        // makes `OmiAudioSource` connect the transport); status/battery are only ever live
+        // DURING a session, not before one starts (M12 final review Critical #1 — corrects an
+        // earlier, inaccurate version of this comment that claimed otherwise).
+        //
+        // `OmiAudioSource.stop()` (called on every session stop AND every park — including a
+        // phone call interruption, via `ListeningPipeline.performHalt`) finishes both of these
+        // streams. Without the re-subscribe loop below, the very first stop/interruption would
+        // permanently kill status updates for the rest of the process: Settings would freeze,
+        // the Bluetooth banner would go stale, and the low-battery notification would never
+        // fire again. Each loop iteration re-subscribes once the previous stream ends, so the
+        // NEXT session picks status back up; the short sleep only guards against a hot spin
+        // while genuinely idle between sessions.
         if let omiSource {
             let stateTask = Task { [weak self] in
-                for await state in await omiSource.connectionStates() {
-                    // setupFailureMessage becomes readable once the codec characteristic has
-                    // been processed — refresh it alongside each state change.
-                    let failure = await omiSource.setupFailureMessage
-                    await MainActor.run {
-                        self?.omiConnectionState = state
-                        self?.omiSetupFailure = failure
+                while !Task.isCancelled, self != nil {
+                    for await state in await omiSource.connectionStates() {
+                        // setupFailureMessage becomes readable once the codec characteristic
+                        // has been processed — refresh it alongside each state change.
+                        let failure = await omiSource.setupFailureMessage
+                        await MainActor.run {
+                            self?.omiConnectionState = state
+                            self?.omiSetupFailure = failure
+                        }
                     }
+                    try? await Task.sleep(for: .milliseconds(100))
                 }
             }
             let batteryTask = Task { [weak self] in
-                for await level in await omiSource.batteryLevels() {
-                    await MainActor.run { self?.applyOmiBattery(level) }
+                while !Task.isCancelled, self != nil {
+                    for await level in await omiSource.batteryLevels() {
+                        await MainActor.run { self?.applyOmiBattery(level) }
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
                 }
             }
             omiObservationTasks = [stateTask, batteryTask]
@@ -892,21 +925,28 @@ final class AppModel {
         CoreBluetoothOmiTransport()
     }
 
-    /// Settings pairing flow: persists the pairing, then rebuilds the pipeline immediately
-    /// if nothing is listening (else the new source composes on the next Start, mirroring
-    /// the existing "Settings changes apply after launch" convention).
+    /// Settings pairing flow: persists the pairing, updates `pairedOmiName` immediately (M12
+    /// final review Important #2 — Settings must reflect the new pairing right away even
+    /// mid-session; before this fix it only updated inside `composePipeline`, so pairing while
+    /// listening left Settings showing the "unpaired" UI as if pairing had silently failed),
+    /// then rebuilds the pipeline immediately if nothing is listening. If something IS
+    /// listening, the new source composes once the session actually ends —
+    /// `rebuildIfSourceShapeChanged()`, called from every place that can bring the pipeline
+    /// back to idle — not on the next relaunch.
     func pairOmi(_ discovery: OmiDiscovery) async {
         (omiStoreOverride ?? OmiDeviceStore()).pair(
             PairedOmiDevice(id: discovery.id, name: discovery.name))
+        pairedOmiName = discovery.name
         await rebuildPipelineIfIdle()
     }
 
-    /// Settings "Forget This Device" (Task 11). Battery/connection are cleared immediately
-    /// regardless of whether a rebuild can happen right away — Settings must stop showing
-    /// live readings for a device we've just told the user we'd stop tracking, even if the
-    /// actual source swap has to wait for the current session to end.
+    /// Settings "Forget This Device" (Task 11). Name/battery/connection are cleared
+    /// immediately regardless of whether a rebuild can happen right away — Settings must stop
+    /// showing a device we've just told the user we'd stop tracking, even if the actual source
+    /// swap has to wait for the current session to end (see `pairOmi` above for the same fix).
     func forgetOmi() async {
         (omiStoreOverride ?? OmiDeviceStore()).forget()
+        pairedOmiName = nil
         omiBatteryLevel = nil
         omiConnectionState = nil
         await rebuildPipelineIfIdle()
@@ -926,5 +966,28 @@ final class AppModel {
             return
         }
         composePipeline(recorder: recorder)
+    }
+
+    /// Wraps every production path that stops a session (currently: the Home screen's Stop
+    /// button) so a pair/forget that happened WHILE that session was running gets its deferred
+    /// rebuild the moment the session actually ends (M12 final review Important #2), instead of
+    /// silently waiting for the next app launch. `toggleFromIntent`'s "stop" case never applies
+    /// here — a Live Activity/notification toggle only pauses (`pauseByUser`), it never fully
+    /// stops, so it never needs this hook.
+    func stopListening() async {
+        await pipeline?.stop()
+        await rebuildIfSourceShapeChanged()
+    }
+
+    /// Idle- and shape-gated: a no-op unless the pipeline is genuinely idle AND what's paired
+    /// right now differs from what the CURRENT pipeline was actually composed with
+    /// (`composedWithOmi`) — i.e. a pair/forget occurred while a session was in flight and
+    /// hasn't been picked up yet. Deliberately simple: piggybacks on the existing
+    /// `rebuildPipelineIfIdle`/`composePipeline` path rather than adding a second one.
+    private func rebuildIfSourceShapeChanged() async {
+        guard pipeline?.status == .idle else { return }
+        let pairedNow = (omiStoreOverride ?? OmiDeviceStore()).device != nil
+        guard pairedNow != composedWithOmi else { return }
+        await rebuildPipelineIfIdle()
     }
 }

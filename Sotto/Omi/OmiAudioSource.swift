@@ -45,9 +45,10 @@ actor OmiAudioSource: ConnectableAudioSource {
     func stop() async {
         // Order matters for quiescence: finish the transport stream first, THEN drain the
         // pump to completion so any buffered straggler events run through handle() BEFORE
-        // the resets below. (Task.cancel() is inert on a plain for-await over AsyncStream —
-        // only finish() ends it.) No deadlock: while stop() suspends awaiting eventTask,
-        // the actor is free to run handle().
+        // the resets below. We rely on finish+drain here (not task cancellation) so buffered
+        // events still deliver and in-flight handlers complete before teardown — cancelling
+        // eventTask instead could drop an already-buffered event mid-decode. No deadlock:
+        // while stop() suspends awaiting eventTask, the actor is free to run handle().
         await transport.stopEvents()
         await eventTask?.value
         eventTask = nil

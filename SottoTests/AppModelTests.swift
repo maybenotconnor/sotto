@@ -280,13 +280,14 @@ struct AppModelTests {
 
     // MARK: - M12 Omi pairing composition
 
-    private func omiModel(suiteSuffix: String) -> AppModel {
+    private func omiModel(suiteSuffix: String, omiTransportOverride: (any OmiTransport)? = nil) -> AppModel {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: "omi-model-tests-\(suiteSuffix)-\(UUID().uuidString)")!
         return AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
-            omiStoreOverride: OmiDeviceStore(defaults: suite))
+            omiStoreOverride: OmiDeviceStore(defaults: suite),
+            omiTransportOverride: omiTransportOverride)
     }
 
     /// Task 10: pairing after setup has already completed rebuilds the pipeline in place
@@ -346,5 +347,126 @@ struct AppModelTests {
         #expect(model.omiConnectionState == nil)
         #expect(model.omiBatteryLevel == nil)
         #expect(model.pipeline?.status == .idle)
+    }
+
+    /// Repeatedly emits `event` (harmless to redeliver — `OmiAudioSource.handle` is idempotent
+    /// for `.connecting`/`.connected`) until `model.omiConnectionState == expected` or the
+    /// timeout elapses. A single emit isn't reliable here: AppModel's observation loop
+    /// (re-)subscribes from a detached `Task` inside `composePipeline`, not from a call the
+    /// test directly awaits, so there's no guarantee the (re-)subscription has landed before
+    /// one emit would arrive — unlike `FailoverAudioSource.start()`, which awaits
+    /// `omi.connectionStates()` synchronously before returning.
+    @discardableResult
+    private func pollUntilConnectionState(
+        _ expected: OmiConnectionState, transport: FakeOmiTransport, event: OmiTransportEvent,
+        model: AppModel, timeout: Duration = .seconds(1)
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            await transport.emit(event)
+            try? await Task.sleep(for: .milliseconds(20))
+            if model.omiConnectionState == expected { return true }
+        }
+        return model.omiConnectionState == expected
+    }
+
+    /// M12 final review Critical #1 regression: `OmiAudioSource.stop()` (called on every
+    /// session stop, and on every park — including a phone-call interruption) finishes the
+    /// `connectionStates()`/`batteryLevels()` streams `composePipeline` subscribed to exactly
+    /// once. Before the fix, AppModel's observation tasks simply exited after the first stop —
+    /// Settings status froze, the Bluetooth banner went stale, and the low-battery notification
+    /// could never fire again for the rest of the process.
+    ///
+    /// Drives a real start→stop→start cycle through the actual composed pipeline (a real
+    /// `FailoverAudioSource` over a real `OmiAudioSource`, fed by a `FakeOmiTransport` — no
+    /// Bluetooth hardware) and asserts `omiConnectionState` updates again in the SECOND session.
+    /// Paired BEFORE `ensureSetUp()` (rather than via a mid-test `pairOmi()`) so the pipeline is
+    /// composed with the Omi failover branch from the start: `FailoverAudioSource.start()` only
+    /// engages its real `PhoneMicAudioSource` fallback if the Omi hasn't streamed by the default
+    /// 3 s startup race, or on a later disconnect — neither happens here, so both start/stop
+    /// round-trips (bounded by `pollUntilConnectionState`'s 1 s timeout) never touch it. Real
+    /// mic access is deliberately never exercised by any test in this suite (no test target
+    /// microphone usage-description; requesting it here would risk a hard crash, not just a
+    /// flaky permission prompt).
+    @Test func omiStatusResubscribesAcrossSessions() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
+        let suite = UserDefaults(suiteName: "omi-model-tests-resubscribe-\(UUID().uuidString)")!
+        let store = OmiDeviceStore(defaults: suite)
+        store.pair(PairedOmiDevice(id: UUID(), name: "Resub Omi"))
+        let transport = FakeOmiTransport()
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
+            omiStoreOverride: store, omiTransportOverride: transport)
+        await model.ensureSetUp()
+        #expect(model.pairedOmiName == "Resub Omi")
+        #expect(model.pipeline?.status == .idle)
+
+        // First session.
+        await model.pipeline?.start()
+        let sawFirst = await pollUntilConnectionState(
+            .connecting, transport: transport, event: .connecting, model: model)
+        #expect(sawFirst, "setup: omiConnectionState never reflected the first session's .connecting")
+
+        await model.pipeline?.stop()
+        #expect(model.pipeline?.status == .idle)
+
+        // Second session: without the re-subscribe loop, the observation task exited when the
+        // first stop() finished the stream — this would never update again.
+        await model.pipeline?.start()
+        let sawSecond = await pollUntilConnectionState(
+            .connected, transport: transport,
+            event: .connected(codecValue: OmiConstants.codecPCM16at16kHz), model: model)
+        #expect(sawSecond, "omiConnectionState never updated again in the second session — observation died after the first stop")
+
+        await model.pipeline?.stop()
+    }
+
+    /// M12 final review Important #2 regression: a mid-session pairing change must (a) surface
+    /// in Settings immediately (not silently wait for `composePipeline`, which only re-runs on
+    /// an idle rebuild) and (b) actually recompose the pipeline once that session ends, with no
+    /// relaunch required.
+    ///
+    /// Exercises the FORGET direction (paired→unpaired) rather than pair-while-on-plain-mic:
+    /// starting unpaired would compose the plain-phone-mic branch, and starting THAT pipeline
+    /// means a real, un-faked `PhoneMicAudioSource.start()` — the one real-mic path this whole
+    /// suite deliberately never takes (see `omiStatusResubscribesAcrossSessions`). Forgetting
+    /// exercises the exact same shared code (`pairedOmiName` immediate-update fix +
+    /// `stopListening()` → `rebuildIfSourceShapeChanged()`), just via the opposite transition,
+    /// with the session itself safely staying on the fake-transport-backed Omi source the whole
+    /// time (never falling back to the real mic within the test's short window — see above).
+    @Test func forgetWhileListeningClearsNameImmediatelyAndRebuildsOnStop() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
+        let suite = UserDefaults(suiteName: "omi-model-tests-forget-live-\(UUID().uuidString)")!
+        let store = OmiDeviceStore(defaults: suite)
+        store.pair(PairedOmiDevice(id: UUID(), name: "Live Omi"))
+        let transport = FakeOmiTransport()
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
+            omiStoreOverride: store, omiTransportOverride: transport)
+        await model.ensureSetUp()
+        let originalPipeline = model.pipeline
+        #expect(model.composedWithOmi == true)
+
+        await model.pipeline?.start()
+        #expect(model.pipeline?.status != .idle)
+
+        await model.forgetOmi()
+
+        // (a) Settings truth updates right away, mid-session — before this fix, `pairedOmiName`
+        // only ever changed inside `composePipeline`, so it would still read "Live Omi" here.
+        #expect(model.pairedOmiName == nil)
+        // Rebuild is deferred: still the same pipeline instance, still composed WITH Omi.
+        #expect(model.pipeline === originalPipeline)
+        #expect(model.composedWithOmi == true)
+
+        // (b) Ending the session (the Home screen's Stop path, via `stopListening()`) picks up
+        // the deferred rebuild — no relaunch required.
+        await model.stopListening()
+
+        #expect(model.pipeline?.status == .idle)
+        #expect(model.composedWithOmi == false)
+        #expect(model.pipeline !== originalPipeline)
     }
 }

@@ -18,9 +18,20 @@ actor PhoneMicAudioSource: AudioSource {
 
     private var engine: AVAudioEngine?
     private var continuation: AsyncStream<AudioChunk>.Continuation?
+    /// M12 final review Follow-up #7: the `engine == nil` check alone only guards against a
+    /// SECOND start() once the first has finished setting `engine` — it says nothing about two
+    /// concurrent start()s racing while the first is suspended on the (awaited) permission
+    /// request below, before `engine` is ever assigned. Set synchronously at entry (so it lands
+    /// before this method's first suspension point) and cleared via `defer` on every exit —
+    /// success or throw — so a second call arriving while the first is still mid-flight
+    /// deterministically throws `alreadyStarted` instead of racing it.
+    private var isStarting = false
 
     func start() async throws -> AsyncStream<AudioChunk> {
         guard engine == nil else { throw AudioSourceError.alreadyStarted }
+        guard !isStarting else { throw AudioSourceError.alreadyStarted }
+        isStarting = true
+        defer { isStarting = false }
         guard await AVAudioApplication.requestRecordPermission() else {
             throw AudioSourceError.microphonePermissionDenied
         }

@@ -267,13 +267,15 @@ final class ListeningPipeline {
         await source.stop()          // finish the stream: no new chunks after this
         await pumpTask?.value        // drain chunks already in flight to quiescence
         pumpTask = nil
-        // source.stop() above already finished sourceChanges(), but a plain `for await` over
-        // AsyncStream is inert to cancellation — a buffered/in-flight handleSourceChange (e.g.
-        // recorder.rollover(to:) + apply(snapshot) reporting .listening) could otherwise land
-        // AFTER finishAndFinalize() below sets status to .idle, reverting it. Await the drain
-        // so it fully resolves BEFORE finalizing (no deadlock: both run on MainActor, and
-        // awaiting .value suspends performHalt, freeing the actor for handleSourceChange calls
-        // still in flight; the loop itself ends because source.stop() finished the stream).
+        // source.stop() above already finished sourceChanges(); we rely on that finish+drain
+        // (not task cancellation) so an already-buffered/in-flight handleSourceChange (e.g.
+        // recorder.rollover(to:) + apply(snapshot) reporting .listening) still gets to run to
+        // completion instead of being dropped mid-flight — which matters here because it could
+        // otherwise land AFTER finishAndFinalize() below sets status to .idle, reverting it.
+        // Await the drain so it fully resolves BEFORE finalizing (no deadlock: both run on
+        // MainActor, and awaiting .value suspends performHalt, freeing the actor for
+        // handleSourceChange calls still in flight; the loop itself ends because source.stop()
+        // finished the stream).
         await sourceEventTask?.value
         sourceEventTask = nil
         switch mode {

@@ -37,10 +37,11 @@ extension PhoneMicAudioSource: RouteChangeHandling {}
 ///   concurrently with `stop()`, or during an actor-reentrant window while `stop()` awaits
 ///   a child `stop()`) is a harmless no-op rather than a corrupting write.
 /// - `handle(_:)` itself guards on `started` for the same reason: child sources (real and
-///   fake) finish their `connectionStates()` streams from inside their `stop()`, and
-///   `Task.cancel()` is inert on a plain `for await` over `AsyncStream` — our `stateTask`
-///   can still receive one more buffered event reentrantly while `FailoverAudioSource.stop()`
-///   is suspended awaiting `omi.stop()`. That event must not spawn a new grace/return timer.
+///   fake) finish their `connectionStates()` streams from inside their `stop()`, and we rely
+///   on that finish+drain (not task cancellation) so any already-buffered event still
+///   delivers — our `stateTask` can still receive one more buffered event reentrantly while
+///   `FailoverAudioSource.stop()` is suspended awaiting `omi.stop()`. That event must not
+///   spawn a new grace/return timer.
 /// - Both child sources are drained unconditionally for as long as this source is started;
 ///   `forward(_:from:)` only forwards while that source is the active one, so the inactive
 ///   child's stream is drained-and-dropped rather than buffered.

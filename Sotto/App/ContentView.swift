@@ -292,7 +292,10 @@ private struct HomeScreen: View {
                     switch pipeline.status {
                     case .idle: await pipeline.start()
                     case .interrupted: await pipeline.resumeFromInterruption()
-                    default: await pipeline.stop()
+                    // Routed through AppModel (not a direct pipeline.stop()) so a pair/forget
+                    // that happened mid-session gets its deferred rebuild the moment this
+                    // session actually ends (M12 final review Important #2).
+                    default: await model.stopListening()
                     }
                 }
             }

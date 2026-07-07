@@ -98,9 +98,13 @@ struct SettingsView: View {
     }
 
     /// M12 Settings (Task 11): pairing status + pair/forget actions for an Omi wearable.
-    /// Pair/forget take effect immediately if nothing is listening, otherwise after the
-    /// current session ends (`AppModel.rebuildPipelineIfIdle`) — mirrors the existing
-    /// "Changes apply..." convention used for the Advanced listening settings above.
+    /// This section's device/status/battery readout always reflects the pairing store
+    /// immediately (`AppModel.pairOmi`/`forgetOmi` set it right away) — but the pipeline's
+    /// ACTUAL audio source only recomposes right away if nothing is listening
+    /// (`AppModel.rebuildPipelineIfIdle`); otherwise the swap is deferred until the current
+    /// session ends (`AppModel.stopListening` → `rebuildIfSourceShapeChanged`, M12 final
+    /// review Important #2) — mirrors the existing "Changes apply..." convention used for the
+    /// Advanced listening settings above.
     private var omiSection: some View {
         Section("Omi Device") {
             if let name = model.pairedOmiName {
@@ -118,7 +122,7 @@ struct SettingsView: View {
                     } message: {
                         Text("Sotto will stop connecting to it and use the iPhone microphone.")
                     }
-                Text("Takes effect right away if nothing's listening, otherwise after the current session ends.")
+                Text("Sotto switches to using it right away if nothing's listening, otherwise once the current session ends.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Button("Pair Omi Device…") { showPairSheet = true }
