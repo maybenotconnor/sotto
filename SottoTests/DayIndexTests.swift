@@ -67,6 +67,26 @@ struct DayIndexTests {
         #expect(entry?.title == "Rollout sync")
     }
 
+    @Test func setTitleMutatesOnlyTheTitle() async throws {
+        let root = tempRoot()
+        let store = DayIndexStore(rootDirectory: root)
+        let url = m4a(root, day: "2026-03-14", name: "09-15-30")
+        await store.recordQueuedSegment(m4aURL: url, startTime: Date(), duration: 10)
+        await store.updateSegment(
+            m4aURL: url, transcriptionState: "done", backend: "speechAnalyzer", wordCount: 847,
+            title: "Rollout sync")
+
+        await store.setTitle(m4aURL: url, title: "Rollout retro")
+
+        let entry = await store.index(forDay: url.deletingLastPathComponent())?.segments.first
+        #expect(entry?.title == "Rollout retro")
+        // Everything else untouched.
+        #expect(entry?.transcriptionState == "done")
+        #expect(entry?.backend == "speechAnalyzer")
+        #expect(entry?.wordCount == 847)
+        #expect(entry?.hasAudio == true)
+    }
+
     @Test func reRecordingSameIdReplacesNotDuplicates() async throws {
         let root = tempRoot()
         let store = DayIndexStore(rootDirectory: root)
