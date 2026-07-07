@@ -2303,7 +2303,6 @@ New AppModel stored members (declare with the other `private var` state):
     private(set) var omiSetupFailure: String?
     private var omiObservationTask: Task<Void, Never>?
 ```
-```
 
 with:
 
