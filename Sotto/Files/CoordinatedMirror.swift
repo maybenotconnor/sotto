@@ -1,10 +1,10 @@
 import Foundation
 
 /// Coordinated (NSFileCoordinator) file mirroring into a destination root that preserves the
-/// `<root>/<day>/<file>` day-directory layout. Extracted from the deleted M11 `SegmentExporter`;
-/// the security-scoped-bookmark handling went with the folder picker — a ubiquity container is
-/// app-owned and needs no access scoping. Best-effort: every failure degrades to "didn't
-/// mirror"; nothing here ever throws into a caller.
+/// `<root>/<day>/<file>` day-directory layout. Extracted from the deleted M11 folder-sync
+/// exporter; the security-scoped-bookmark handling went with the folder picker — a ubiquity
+/// container is app-owned and needs no access scoping. Best-effort: every failure degrades to
+/// "didn't mirror"; nothing here ever throws into a caller.
 enum CoordinatedMirror {
     /// Coordinated copy of `source` into `<root>/<day>/`, creating the day directory and
     /// replacing any existing file of the same name. Returns true when the file landed;

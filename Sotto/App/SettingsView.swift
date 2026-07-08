@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 import UserNotifications
-import UniformTypeIdentifiers
 
 /// SPEC "Settings": Listening / Transcription / Storage / Notifications / About & Legal.
 struct SettingsView: View {
@@ -19,9 +18,12 @@ struct SettingsView: View {
     @State private var usage: AppModel.StorageUsage?
     @State private var showPowerUser = false
     @State private var notificationStatus = "—"
-    @State private var showSyncFolderPicker = false
-    @State private var syncFolderName: String?
-    @State private var exportAllResult: String?
+    @State private var iCloudBackupEnabled = true
+    @State private var iCloudStatus = "—"
+    @State private var iCloudHasBackups = false
+    @State private var backupResult: String?
+    @State private var restoreResult: String?
+    @State private var showRemoveBackupConfirm = false
     @State private var showPairSheet = false
     @State private var showForgetConfirm = false
 
@@ -31,20 +33,12 @@ struct SettingsView: View {
             omiSection
             transcriptionSection
             storageSection
+            backupSection
             notificationsSection
             aboutSection
         }
         .navigationTitle("Settings")
         .sheet(isPresented: $showPairSheet) { OmiPairSheet(model: model) }
-        .fileImporter(isPresented: $showSyncFolderPicker, allowedContentTypes: [.folder]) { result in
-            guard case .success(let url) = result else { return }
-            do {
-                try SyncDestinationStore().save(url: url)
-                syncFolderName = SyncDestinationStore().displayName
-            } catch {
-                exportAllResult = "Couldn't save that folder — try picking it again."
-            }
-        }
         .task {
             let settings = model.settings
             vadThreshold = settings.vadThreshold
@@ -54,9 +48,13 @@ struct SettingsView: View {
             retention = settings.audioRetention
             engine = settings.transcriptionEngine
             wifiOnly = settings.wifiOnlyUpload
+            iCloudBackupEnabled = settings.iCloudBackupEnabled
+            iCloudStatus = await model.iCloudAvailable()
+                ? "Backed up to iCloud"
+                : "iCloud unavailable — sign in to iCloud in Settings"
+            iCloudHasBackups = await model.iCloudHasBackups()
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
-            syncFolderName = SyncDestinationStore().displayName
             let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
             notificationStatus = switch notificationSettings.authorizationStatus {
             case .authorized: "On"
@@ -221,38 +219,64 @@ struct SettingsView: View {
             }
             Text("Your recordings live in Files ▸ On My iPhone ▸ Sotto.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
 
-            // M11 cloud sync: clone finalized conversations into any Files-provider folder.
-            if let syncFolderName {
-                LabeledContent("Cloud sync folder", value: syncFolderName)
-                Text("New conversations are copied to this folder automatically after each transcription.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("Export all now") {
-                    exportAllResult = "Exporting…"
-                    Task {
-                        // NOTE (Task 7 iCloud rewiring): AppModel's folder-destination export
-                        // entry point was removed in favor of the iCloud backup/restore surface;
-                        // this button is a placeholder pointed at the new entry point until this
-                        // whole "Cloud sync folder" section is replaced by the iCloud Settings UI.
-                        let copied = await model.backupAllToICloud()
-                        exportAllResult = "Copied \(copied) file(s)."
+    /// Backup & Restore (design 2026-07-07). iCloud controls only this phase; the "additional
+    /// backup providers" dropdown lands with the WebDAV phase (YAGNI — no empty dropdown now).
+    private var backupSection: some View {
+        Section("Backup & Restore") {
+            Toggle("Back up transcripts to iCloud", isOn: $iCloudBackupEnabled)
+                .onChange(of: iCloudBackupEnabled) { _, value in
+                    model.settings.iCloudBackupEnabled = value
+                }
+            Text("Transcripts (not audio) are backed up to your iCloud so you don't lose them if you get a new phone. Your recordings stay on this device.")
+                .font(.caption).foregroundStyle(.secondary)
+
+            LabeledContent("Status", value: iCloudStatus)
+
+            Button("Back up now") {
+                backupResult = "Backing up…"
+                Task {
+                    let n = await model.backupAllToICloud()
+                    backupResult = "Backed up \(n) transcript\(n == 1 ? "" : "s")."
+                    iCloudHasBackups = await model.iCloudHasBackups()
+                }
+            }
+            if let backupResult {
+                Text(backupResult).font(.caption).foregroundStyle(.secondary)
+            }
+
+            Button("Restore from iCloud") {
+                restoreResult = "Restoring…"
+                Task {
+                    let n = await model.restoreFromICloud()
+                    restoreResult = n > 0
+                        ? "Restored \(n) transcript\(n == 1 ? "" : "s")."
+                        : "Nothing new to restore."
+                }
+            }
+            if let restoreResult {
+                Text(restoreResult).font(.caption).foregroundStyle(.secondary)
+            }
+
+            // Shown only when the container actually holds transcripts — so "stop backing up"
+            // (the toggle, non-destructive) can never be confused with "delete my backup".
+            if iCloudHasBackups {
+                Button("Remove iCloud backup", role: .destructive) { showRemoveBackupConfirm = true }
+                    .confirmationDialog("Remove all transcripts from iCloud?",
+                                        isPresented: $showRemoveBackupConfirm) {
+                        Button("Remove", role: .destructive) {
+                            Task {
+                                await model.removeICloudBackup()
+                                iCloudHasBackups = false
+                                backupResult = "Removed iCloud backup."
+                            }
+                        }
+                    } message: {
+                        Text("This deletes your backed-up transcripts from iCloud. Transcripts on this device are not affected.")
                     }
-                }
-                Text("\"Export all now\" is a one-time catch-up: it copies conversations recorded before you set this folder.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let exportAllResult {
-                    Text(exportAllResult).font(.caption).foregroundStyle(.secondary)
-                }
-                Button("Stop syncing", role: .destructive) {
-                    SyncDestinationStore().clear()
-                    self.syncFolderName = nil
-                    exportAllResult = nil
-                }
-                Text("Deleting a conversation in Sotto doesn't remove copies already in this folder.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Button("Set cloud sync folder…") { showSyncFolderPicker = true }
-                Text("New conversations are copied there after transcription — works with iCloud Drive, Google Drive, OpenCloud, and any Files provider.")
+                Text("Turning off the toggle just stops backing up — your existing iCloud copies stay. Use this to remove them.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
