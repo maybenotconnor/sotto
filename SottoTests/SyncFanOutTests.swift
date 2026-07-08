@@ -58,6 +58,23 @@ struct SyncFanOutTests {
         #expect(calls == [.remove(day: "2026-07-05", basename: "09-15-00")])
     }
 
+    /// `for sink in activeSinks` must actually iterate — a single-sink test can't tell a loop
+    /// from a first-element-only bug. Two independent recorders, one upsert, both must see it.
+    @Test func upsertFansOutToEveryRegisteredSinkWhenMoreThanOnePresent() async {
+        let recorderA = RecordingSink()
+        let recorderB = RecordingSink()
+        SyncSinkRegistry.testSinks = [recorderA, recorderB]
+        defer { SyncSinkRegistry.testSinks = nil }
+
+        let m4a = URL(fileURLWithPath: "/tmp/Sotto/2026-07-05/09-15-00.m4a")
+        SyncSinkRegistry.upsert(m4aURL: m4a, SettingsStore(defaults: freshSuite()))
+
+        let callsA = await recorderA.waitForCalls(1)
+        let callsB = await recorderB.waitForCalls(1)
+        #expect(callsA == [.upsert(day: "2026-07-05", basename: "09-15-00")])
+        #expect(callsB == [.upsert(day: "2026-07-05", basename: "09-15-00")])
+    }
+
     @Test func iCloudSinkPresentWhenEnabled() {
         let settings = SettingsStore(defaults: freshSuite())   // default on
         let sinks = SyncSinkRegistry.activeSinks(settings)
@@ -97,6 +114,54 @@ struct SyncFanOutTests {
 
         let calls = await recorder.waitForCalls(1)
         #expect(calls == [.remove(day: "2026-07-05", basename: "09-15-00")])
+    }
+
+    /// Merge-site wiring: unlike delete/rename, `mergeSegments` guards on `dayIndex` being
+    /// populated (`guard let dayIndex else { return false }`), so this test drives a real
+    /// `ensureSetUp()` + `loadInitialHistory()` first — reusing the exact fixture/setup
+    /// pattern `AppModelTests.mergeSegmentsCombinesFilesIndexAndHistory` already established
+    /// (yesterday's day folder, `ConversationMergerTests.partOne`/`partTwo` as the two parts).
+    /// Merge fans out an upsert for the earliest/merged part plus a remove for every
+    /// merged-away part (design §3) — here one of each.
+    @MainActor @Test func mergeSegmentsFansOutUpsertForMergedAndRemoveForEachPart() async {
+        let recorder = RecordingSink()
+        SyncSinkRegistry.testSinks = [recorder]
+        defer { SyncSinkRegistry.testSinks = nil }
+
+        let root = tempDir()
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        // Yesterday, so refreshLoadedHistory's "prepend today" logic stays out of the way
+        // (same rationale as AppModelTests.mergeSegmentsCombinesFilesIndexAndHistory).
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dayName = dayFormatter.string(from: day)
+        let dir = root.appendingPathComponent(dayName, isDirectory: true)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! ConversationMergerTests.partOne.write(
+            to: dir.appendingPathComponent("09-15-30.md"), atomically: true, encoding: .utf8)
+        try! ConversationMergerTests.partTwo.write(
+            to: dir.appendingPathComponent("10-01-00.md"), atomically: true, encoding: .utf8)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()   // no _day.json → rebuilds; both entries "done"
+        let section = model.historySections[0]
+        #expect(section.index.segments.count == 2)
+
+        let ok = await model.mergeSegments(
+            dayDirectory: section.dayDirectory, entries: section.index.segments)
+        #expect(ok)
+
+        // regenerateNotes is spawned detached but early-returns unless
+        // FoundationModelsPostProcessor.isModelAvailable, which is false in the simulator — so
+        // no extra upsert fires and exactly these two calls land.
+        let calls = await recorder.waitForCalls(2)
+        #expect(calls.count == 2)
+        #expect(calls.contains(.upsert(day: dayName, basename: "09-15-30")))   // earliest/merged
+        #expect(calls.contains(.remove(day: dayName, basename: "10-01-00")))   // merged-away part
     }
 
     @MainActor @Test func renameSegmentFansOutUpsert() async {

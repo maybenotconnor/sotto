@@ -239,7 +239,9 @@ struct SettingsView: View {
                 backupResult = "Backing up…"
                 Task {
                     let n = await model.backupAllToICloud()
-                    backupResult = "Backed up \(n) transcript\(n == 1 ? "" : "s")."
+                    backupResult = await model.iCloudAvailable()
+                        ? "Backed up \(n) transcript\(n == 1 ? "" : "s")."
+                        : "iCloud unavailable — sign in to iCloud in Settings."
                     iCloudHasBackups = await model.iCloudHasBackups()
                 }
             }
