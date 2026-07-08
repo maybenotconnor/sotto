@@ -109,6 +109,19 @@ extension SettingsStore {
         nonmutating set { defaults.set(newValue, forKey: "wifiOnlyUpload") }
     }
 
+    /// iCloud backup phase (design 2026-07-07): whether finalized transcripts mirror to the
+    /// app's iCloud ubiquity container. Default ON (opt-out) — Sotto is an ambient recorder,
+    /// so the "don't lose your data on a new phone" safety net protects the majority who never
+    /// open Settings; `object(forKey:) == nil` distinguishes "never set" (→ true) from an
+    /// explicit false, matching the wifiOnlyUpload precedent above.
+    var iCloudBackupEnabled: Bool {
+        get {
+            defaults.object(forKey: "iCloudBackupEnabled") == nil
+                ? true : defaults.bool(forKey: "iCloudBackupEnabled")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "iCloudBackupEnabled") }
+    }
+
     /// M10 engine picker (supersedes M6b's "Use Deepgram" bool). Reads the legacy
     /// `deepgramEnabled` key as a migration fallback so pre-M10 installs keep their choice;
     /// writes only the new key. AppModel's provider closure still requires a Keychain key
