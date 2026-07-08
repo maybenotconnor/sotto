@@ -633,10 +633,17 @@ struct ICloudSyncSink: TranscriptSyncSink {
     /// Whether the container currently holds any transcript — drives showing the "Remove iCloud
     /// backup" action. Container nil → false.
     func hasBackups() async -> Bool {
+        // Two-level walk (`Transcripts/<day>/*.md`) rather than `FileManager.enumerator`, whose
+        // non-Sendable `DirectoryEnumerator` trips Swift 6 region isolation in this async context.
         guard let root = transcriptsRoot(),
-              let enumerator = FileManager.default.enumerator(
-                  at: root, includingPropertiesForKeys: nil) else { return false }
-        for case let url as URL in enumerator where url.pathExtension == "md" { return true }
+              let days = try? FileManager.default.contentsOfDirectory(
+                  at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { return false }
+        for day in days {
+            guard (try? day.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                  let files = try? FileManager.default.contentsOfDirectory(
+                      at: day, includingPropertiesForKeys: nil) else { continue }
+            for md in files where md.pathExtension == "md" { return true }
+        }
         return false
     }
 }
