@@ -45,8 +45,7 @@ Every task's requirements implicitly include this section. Values copied verbati
 **Test files:**
 - `SottoTests/CoordinatedMirrorTests.swift` (new).
 - `SottoTests/ICloudSyncSinkTests.swift` (new — repurposes `SyncDestinationTests.swift`, which is deleted).
-- `SottoTests/SyncSinkRegistryTests.swift` (new).
-- `SottoTests/SyncFanOutTests.swift` (new — `RecordingSink` helper + fan-out + AppModel wiring; a `.serialized` suite).
+- `SottoTests/SyncFanOutTests.swift` (new — a single `@Suite(.serialized)`: `RecordingSink` helper, registry-toggle tests, fan-out mechanics, and (Task 7) AppModel wiring. Every test reads/writes the process-global `testSinks` seam, so they MUST share one serialized suite — a sibling non-serialized suite would race it.)
 - `SottoTests/ICloudRestoreTests.swift` (new).
 
 ---
