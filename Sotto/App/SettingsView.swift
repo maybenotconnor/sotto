@@ -230,9 +230,12 @@ struct SettingsView: View {
                 Button("Export all now") {
                     exportAllResult = "Exporting…"
                     Task {
-                        let copied = await model.exportAllToSyncDestination()
-                        exportAllResult = copied.map { "Copied \($0) file(s)." }
-                            ?? "Folder unavailable — pick it again."
+                        // NOTE (Task 7 iCloud rewiring): AppModel's folder-destination export
+                        // entry point was removed in favor of the iCloud backup/restore surface;
+                        // this button is a placeholder pointed at the new entry point until this
+                        // whole "Cloud sync folder" section is replaced by the iCloud Settings UI.
+                        let copied = await model.backupAllToICloud()
+                        exportAllResult = "Copied \(copied) file(s)."
                     }
                 }
                 Text("\"Export all now\" is a one-time catch-up: it copies conversations recorded before you set this folder.")

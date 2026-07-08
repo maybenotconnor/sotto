@@ -97,6 +97,10 @@ final class AppModel {
     /// "nothing recorded yet" empty state so a quiet, spinner-less launch (or a
     /// pull-to-refresh) never flashes that copy while the first real page is still loading.
     private(set) var hasLoadedHistoryOnce = false
+    /// Set after a launch or manual iCloud restore actually added transcripts — surfaced as a
+    /// small status line on the home screen and cleared when the user dismisses it. nil =
+    /// nothing restored / not run yet.
+    private(set) var restoreStatus: String?
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
@@ -327,6 +331,18 @@ final class AppModel {
         recoveryNotice = nil
     }
 
+    /// Lets the user clear the "Restored N transcripts from iCloud" line.
+    func dismissRestoreStatus() {
+        restoreStatus = nil
+    }
+
+    /// Applies a completed restore's result on the main actor: status line + full history
+    /// reload (restore can add OLDER days the incremental refresh path won't surface).
+    private func applyRestoreResult(_ count: Int) async {
+        restoreStatus = "Restored \(count) transcript\(count == 1 ? "" : "s") from iCloud"
+        await loadInitialHistory()
+    }
+
     /// SPEC "File output" store layout: the folder a given local day's segments live under.
     func dayDirectory(for date: Date) -> URL {
         segmentRoot.appendingPathComponent(Self.dayFolderFormatter.string(from: date))
@@ -372,13 +388,8 @@ final class AppModel {
         await queue?.removeJob(m4aURL: m4aURL)
         await dayIndex?.removeSegment(m4aURL: m4aURL)
         PreviewCache.shared.invalidate(mdURL: mdURL)
-        // Merge-conversations spec (2026-07-06), delete-propagation fix: local deletes
-        // now also clean the sync mirror — best-effort and detached, like every mirror op.
-        if let destination = SyncDestinationStore().resolve() {
-            Task.detached(priority: .utility) {
-                SegmentExporter.remove(m4aURL: m4aURL, from: destination)
-            }
-        }
+        // Delete-propagation: clean every backup sink's copy (design 2026-07-07 §3, delete verb).
+        SyncSinkRegistry.remove(m4aURL: m4aURL, settings)
         await refreshLoadedHistory()
     }
 
@@ -393,11 +404,8 @@ final class AppModel {
         guard ConversationMerger.applyTitle(to: mdURL, title: title, startTime: startTime)
         else { return }
         await dayIndex?.setTitle(m4aURL: m4aURL, title: title)
-        if let destination = SyncDestinationStore().resolve() {
-            Task.detached(priority: .utility) {
-                SegmentExporter.export(m4aURL: m4aURL, to: destination)
-            }
-        }
+        // Rename rewrites the .md in place (filename unchanged) → a plain upsert (design §3).
+        SyncSinkRegistry.upsert(m4aURL: m4aURL, settings)
         await refreshLoadedHistory()
     }
 
@@ -430,21 +438,10 @@ final class AppModel {
             PreviewCache.shared.invalidate(
                 mdURL: dayDirectory.appendingPathComponent("\(id).md"))
         }
-        // Mirror: export the merged conversation, remove the merged-away parts. For a
-        // transcript-only merge, remove the merged basename FIRST so a previously
-        // mirrored .m4a doesn't survive next to the new transcript-only .md — export
-        // then re-copies just the .md.
-        if let destination = SyncDestinationStore().resolve() {
-            let mergedM4A = outcome.mergedM4AURL
-            let mergedHasAudio = outcome.mergedEntry.hasAudio
-            let removedURLs = outcome.removedIDs.map {
-                dayDirectory.appendingPathComponent("\($0).m4a")
-            }
-            Task.detached(priority: .utility) {
-                if !mergedHasAudio { SegmentExporter.remove(m4aURL: mergedM4A, from: destination) }
-                SegmentExporter.export(m4aURL: mergedM4A, to: destination)
-                for url in removedURLs { SegmentExporter.remove(m4aURL: url, from: destination) }
-            }
+        // Merge = update the earliest part + drop the merged-away parts (design §3).
+        SyncSinkRegistry.upsert(m4aURL: outcome.mergedM4AURL, settings)
+        for id in outcome.removedIDs {
+            SyncSinkRegistry.remove(m4aURL: dayDirectory.appendingPathComponent("\(id).m4a"), settings)
         }
         await refreshLoadedHistory()
         let mergedEntry = outcome.mergedEntry
@@ -476,11 +473,7 @@ final class AppModel {
             m4aURL: m4aURL, transcriptionState: "done", backend: nil, wordCount: nil,
             title: notes.title)
         PreviewCache.shared.invalidate(mdURL: mdURL)
-        if let destination = SyncDestinationStore().resolve() {
-            Task.detached(priority: .utility) {
-                SegmentExporter.export(m4aURL: m4aURL, to: destination)
-            }
-        }
+        SyncSinkRegistry.upsert(m4aURL: m4aURL, settings)   // notes rewrite the .md → upsert
         await refreshLoadedHistory()
     }
 
@@ -506,16 +499,45 @@ final class AppModel {
             transcriptKB: Double(transcriptBytes) / 1024)
     }
 
-    /// M11 Settings "Export all now": mirrors every conversation under the local store into
-    /// the sync destination. Returns nil when no destination is configured (or it stopped
-    /// resolving — folder deleted, provider uninstalled), else the number of files copied.
-    /// Detached for the same reason as the per-segment export: provider I/O must not ride
-    /// the main actor.
-    func exportAllToSyncDestination() async -> Int? {
-        guard let destination = SyncDestinationStore().resolve() else { return nil }
+    /// Settings "Back up now": sweeps every local transcript into the iCloud container.
+    /// Detached — container I/O must not ride the main actor. Container unavailable → 0.
+    func backupAllToICloud() async -> Int {
         let root = segmentRoot
         return await Task.detached(priority: .utility) {
-            SegmentExporter.exportAll(root: root, to: destination)
+            await ICloudSyncSink().backupAll(localRoot: root)
+        }.value
+    }
+
+    /// Settings "Restore from iCloud" (manual): additively hydrate local from the container,
+    /// then reload history (restore can add OLDER day directories that the incremental refresh
+    /// can't surface). Returns the number restored.
+    func restoreFromICloud() async -> Int {
+        guard let dayIndex else { return 0 }
+        let root = segmentRoot
+        let restored = await Task.detached(priority: .utility) {
+            await ICloudRestore.run(localRoot: root, dayIndex: dayIndex)
+        }.value
+        if restored > 0 { await loadInitialHistory() }
+        return restored
+    }
+
+    /// Settings "Remove iCloud backup": purge the whole Transcripts/ prefix. Local is untouched.
+    func removeICloudBackup() async {
+        await Task.detached(priority: .utility) { await ICloudSyncSink().removeAllBackups() }.value
+    }
+
+    /// Whether the container currently holds any transcript — gates the "Remove iCloud backup"
+    /// action + informs the status line.
+    func iCloudHasBackups() async -> Bool {
+        await Task.detached(priority: .utility) { await ICloudSyncSink().hasBackups() }.value
+    }
+
+    /// Whether the ubiquity container resolves (signed in + entitled). Detached: resolution is
+    /// documented as potentially slow and must not ride the main actor.
+    func iCloudAvailable() async -> Bool {
+        await Task.detached(priority: .utility) {
+            FileManager.default.url(
+                forUbiquityContainerIdentifier: ICloudSyncSink.containerIdentifier) != nil
         }.value
     }
 
@@ -583,6 +605,12 @@ final class AppModel {
         // nonisolated contexts. Settings changes apply on the NEXT Start/launch (SPEC
         // "changes affect only future segments"), not to a session already in progress.
         let settings = self.settings
+
+        // Pre-release folder-picker teardown (design §8/§12): clear the dead M11 sync bookmark
+        // keys so no dangling security-scoped bookmark lingers. Best-effort, no data migration
+        // (there is no folder-picker install base).
+        settings.defaults.removeObject(forKey: "syncDestinationBookmark")
+        settings.defaults.removeObject(forKey: "syncDestinationDisplayName")
 
         // Unconditional launch sweep (SPEC "Recording writer"): a failed finalize can leave
         // a CAF behind even after a clean shutdown. No-op when nothing is orphaned.
@@ -726,20 +754,14 @@ final class AppModel {
                            m4aURL: transition.job.m4aURL, retention: settings.audioRetention) {
                         await dayIndexStore.setAudioRemoved(m4aURL: transition.job.m4aURL)
                     }
-                    // M11 cloud sync: after retention has decided what stays, mirror the
-                    // finalized conversation into the sync folder. AFTER retention on
-                    // purpose — the cloud copy reflects what the app keeps (the transcript
-                    // always ships; the audio only when retained). Destination resolved
-                    // fresh per transition (same pattern as the per-job serviceProvider) so
-                    // changing/clearing the folder applies immediately. Detached: provider
-                    // I/O (iCloud/Drive/OpenCloud) can stall for seconds and must never
-                    // block this handler's index work or ride the main actor.
-                    if transition.job.state == .done,
-                       let syncDestination = SyncDestinationStore().resolve() {
-                        let m4aURL = transition.job.m4aURL
-                        Task.detached(priority: .utility) {
-                            SegmentExporter.export(m4aURL: m4aURL, to: syncDestination)
-                        }
+                    // Backup fan-out: after retention has decided what stays, mirror the
+                    // finalized transcript to every active sink (design 2026-07-07). AFTER
+                    // retention on purpose — the backup reflects what the app keeps (the
+                    // transcript always ships; iCloud ignores audio anyway). Sinks resolved
+                    // fresh so a toggle applies immediately; each op detached + failure-isolated
+                    // inside the registry, so provider I/O never blocks this handler.
+                    if transition.job.state == .done {
+                        SyncSinkRegistry.upsert(m4aURL: transition.job.m4aURL, settings)
                     }
                 }
             }
@@ -779,6 +801,20 @@ final class AppModel {
                     root: store.rootDirectory, retention: settings.audioRetention)
                 for url in swept {
                     await dayIndexStore.setAudioRemoved(m4aURL: url)
+                }
+            }
+
+            // iCloud restore (additive, idempotent): hydrate transcripts backed up from a
+            // previous device into the local store, then rebuild affected day indexes so they
+            // surface in history. Detached — container download can block for seconds. Bootstrap
+            // safety: outbound deletes are event-driven only, so an empty local store never wipes
+            // the backup before this fills it (design §5).
+            if settings.iCloudBackupEnabled {
+                Task.detached { [weak self] in
+                    let restored = await ICloudRestore.run(
+                        localRoot: store.rootDirectory, dayIndex: dayIndexStore)
+                    guard restored > 0 else { return }
+                    await self?.applyRestoreResult(restored)
                 }
             }
         } catch {

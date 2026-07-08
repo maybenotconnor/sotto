@@ -70,4 +70,60 @@ struct SyncFanOutTests {
         settings.iCloudBackupEnabled = false
         #expect(SyncSinkRegistry.activeSinks(settings).isEmpty)
     }
+
+    // --- AppModel site wiring: each mutation drives the expected verb through the registry ---
+
+    private func tempDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fan-out-appmodel-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @MainActor @Test func deleteSegmentFansOutRemove() async {
+        let recorder = RecordingSink()
+        SyncSinkRegistry.testSinks = [recorder]
+        defer { SyncSinkRegistry.testSinks = nil }
+
+        let root = tempDir()
+        let dayDir = root.appendingPathComponent("2026-07-05", isDirectory: true)
+        try! FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        let m4a = dayDir.appendingPathComponent("09-15-00.m4a")
+        try! Data([0x01]).write(to: m4a)
+        try! "body".write(to: dayDir.appendingPathComponent("09-15-00.md"), atomically: true, encoding: .utf8)
+
+        let model = AppModel(segmentRootOverride: root)
+        await model.deleteSegment(m4aURL: m4a)
+
+        let calls = await recorder.waitForCalls(1)
+        #expect(calls == [.remove(day: "2026-07-05", basename: "09-15-00")])
+    }
+
+    @MainActor @Test func renameSegmentFansOutUpsert() async {
+        let recorder = RecordingSink()
+        SyncSinkRegistry.testSinks = [recorder]
+        defer { SyncSinkRegistry.testSinks = nil }
+
+        let root = tempDir()
+        let dayDir = root.appendingPathComponent("2026-07-05", isDirectory: true)
+        try! FileManager.default.createDirectory(at: dayDir, withIntermediateDirectories: true)
+        let m4a = dayDir.appendingPathComponent("09-15-00.m4a")
+        try! Data([0x01]).write(to: m4a)
+        // A valid transcript so ConversationMerger.applyTitle succeeds (else rename returns early).
+        try! """
+        ---
+        date: 2026-07-05T09:15:00Z
+        duration: 5.0
+        ---
+
+        **Speaker 0:** hi
+        """.write(to: dayDir.appendingPathComponent("09-15-00.md"), atomically: true, encoding: .utf8)
+
+        let model = AppModel(segmentRootOverride: root)
+        await model.renameSegment(m4aURL: m4a, title: "New title",
+                                  startTime: Date(timeIntervalSince1970: 1_783_667_700))
+
+        let calls = await recorder.waitForCalls(1)
+        #expect(calls == [.upsert(day: "2026-07-05", basename: "09-15-00")])
+    }
 }
