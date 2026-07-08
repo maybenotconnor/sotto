@@ -37,3 +37,44 @@ extension SyncSegment {
         self.init(day: day, basename: basename, markdown: markdown, audio: audio)
     }
 }
+
+/// Assembles the active sinks from current settings and fans mutation events out to them.
+/// Sinks are resolved FRESH per event (mirrors the existing per-job `serviceProvider`
+/// pattern), so toggling a provider applies immediately with nothing to reconstruct.
+enum SyncSinkRegistry {
+    #if DEBUG
+    /// Test seam: when non-nil, `activeSinks` returns this verbatim, letting a test inject a
+    /// recording sink. Process-wide mutable state — tests that set it must be `.serialized`.
+    nonisolated(unsafe) static var testSinks: [any TranscriptSyncSink]?
+    #endif
+
+    static func activeSinks(_ settings: SettingsStore) -> [any TranscriptSyncSink] {
+        #if DEBUG
+        if let testSinks { return testSinks }
+        #endif
+        var sinks: [any TranscriptSyncSink] = []
+        if settings.iCloudBackupEnabled { sinks.append(ICloudSyncSink()) }
+        // Later phases append here: WebDAVSyncSink(config:), GoogleDriveSyncSink(...)
+        return sinks
+    }
+
+    /// Fan a finalized-conversation upsert out to every active sink — each detached and
+    /// failure-isolated so no sink's slow/failed I/O rides the caller. Safe to call from the
+    /// MainActor choke points AND the @Sendable transition closure: takes a Sendable
+    /// `SettingsStore` and captures no actor state.
+    static func upsert(m4aURL: URL, _ settings: SettingsStore) {
+        let segment = SyncSegment(m4aURL: m4aURL)
+        for sink in activeSinks(settings) {
+            Task.detached(priority: .utility) { await sink.upsert(segment) }
+        }
+    }
+
+    /// Fan a deletion/merge-consumed-part out to every active sink, detached + failure-isolated.
+    static func remove(m4aURL: URL, _ settings: SettingsStore) {
+        let day = m4aURL.deletingLastPathComponent().lastPathComponent
+        let basename = m4aURL.deletingPathExtension().lastPathComponent
+        for sink in activeSinks(settings) {
+            Task.detached(priority: .utility) { await sink.remove(day: day, basename: basename) }
+        }
+    }
+}
