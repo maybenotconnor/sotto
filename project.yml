@@ -42,6 +42,8 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
+    entitlements:
+      path: Sotto/Sotto.entitlements
   SottoWidgets:
     type: app-extension
     platform: iOS
