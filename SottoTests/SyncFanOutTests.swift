@@ -57,4 +57,17 @@ struct SyncFanOutTests {
         let calls = await recorder.waitForCalls(1)
         #expect(calls == [.remove(day: "2026-07-05", basename: "09-15-00")])
     }
+
+    @Test func iCloudSinkPresentWhenEnabled() {
+        let settings = SettingsStore(defaults: freshSuite())   // default on
+        let sinks = SyncSinkRegistry.activeSinks(settings)
+        #expect(sinks.count == 1)
+        #expect(sinks.first is ICloudSyncSink)
+    }
+
+    @Test func noSinksWhenDisabled() {
+        let settings = SettingsStore(defaults: freshSuite())
+        settings.iCloudBackupEnabled = false
+        #expect(SyncSinkRegistry.activeSinks(settings).isEmpty)
+    }
 }
