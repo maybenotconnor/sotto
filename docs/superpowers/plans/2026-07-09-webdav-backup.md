@@ -812,7 +812,9 @@ struct WebDAVExecutorTests {
     }
 
     @Test func opsExecuteStrictlyFIFO() async throws {
-        let transport = FakeWebDAVTransport()
+        // 204 is accepted by both PUT and DELETE; the default 201 fallback would make
+        // DELETE throw server(201) and drop the second DELETE (execution-found bug).
+        let transport = FakeWebDAVTransport(fallback: .status(204))
         let executor = executor(transport)
         let segment = try makeSegment(root: tempDir())
         let config = makeWebDAVConfig()
@@ -1007,7 +1009,7 @@ actor WebDAVExecutor {
         tail = Task { [previous] in
             await previous?.value
             let outcome = await work()
-            await self.record(outcome)
+            self.record(outcome)   // Task{} inherits actor isolation — await would warn
         }
     }
 
