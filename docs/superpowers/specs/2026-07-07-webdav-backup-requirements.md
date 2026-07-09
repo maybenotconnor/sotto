@@ -1,8 +1,8 @@
 # WebDAV Backup — Requirements (pre-design)
 
-> **Status:** Requirements capture. **NOT yet designed** — this is the seed for a future
-> brainstorm, not an approved design. Decisions marked "open" belong to that brainstorm.
-> **Date:** 2026-07-07.
+> **Status:** Superseded — the brainstorm happened and every open question below is decided in
+> `specs/2026-07-09-webdav-backup-design.md`. Kept for the firm requirements and research
+> record. **Date:** 2026-07-07; designed 2026-07-09.
 > **Depends on:** the iCloud phase shipping first — see
 > `specs/2026-07-07-backup-restore-icloud-design.md` (the `TranscriptSyncSink` seam and the
 > Backup & Restore Settings section this feature plugs into).
@@ -61,9 +61,10 @@ removals). This is explicitly a **follow-up, not initial WebDAV scope**.
 - **Restore parity?** iCloud has inbound restore. Should WebDAV also support *pull* (restore
   transcripts from the server to a new device), or is it backup-only at first? A self-hoster likely
   wants restore too — but it reopens the "which source wins" question. Decide in the brainstorm.
-- **Base path**: fixed convention (e.g. `/Sotto/`) vs user-chosen remote folder. OpenCloud WebDAV
-  endpoints look like `https://<host>/remote.php/dav/files/<user>/…` — confirm the exact base and
-  whether the user supplies the full collection URL or just host + path.
+- **Base path**: fixed convention (e.g. `/Sotto/`) vs user-chosen remote folder. (Correction from
+  the design review: `remote.php/dav/files/<user>/` is classic ownCloud/Nextcloud style, not
+  OpenCloud's — OpenCloud/oCIS is spaces-based with legacy-compat routes. Decided: the user pastes
+  the exact collection URL; Sotto never derives any server's path scheme.)
 - **Self-signed / custom-CA servers**: many self-hosters run their own TLS. How much cert handling
   do we support (system trust only vs pinning vs allow-user-trust)? Security-sensitive — treat
   carefully.
