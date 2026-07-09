@@ -299,12 +299,12 @@ struct WebDAVExecutorTests {
         #expect(await transport2.recorded.map(\.method) == ["PROPFIND", "PROPFIND"])   // no GETs
     }
 
-    @Test func restoreSurvivesAnUnreachableServer() async throws {
+    @Test func restoreReportsUnreachableServerAsNil() async throws {
         let transport = FakeWebDAVTransport(fallback: .error(URLError(.cannotConnectToHost)))
         let executor = makeExecutor(transport)
         let root = tempDir()
         let restored = await executor.restore(
             localRoot: root, config: makeWebDAVConfig(), dayIndex: DayIndexStore(rootDirectory: root))
-        #expect(restored == 0)
+        #expect(restored == nil)
     }
 }

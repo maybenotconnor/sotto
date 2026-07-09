@@ -147,13 +147,16 @@ actor WebDAVExecutor {
     /// invisible, which is what makes "exact URL, no subfolder" safe. Never overwrites a
     /// local file; rebuilds `_day.json` per touched day (restored conversations get
     /// hasAudio = false from the rebuilder — audio is not restored, same asymmetry as
-    /// iCloud). Doesn't touch `lastOutcome`: its result is reported inline.
-    func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int {
+    /// iCloud). Doesn't touch `lastOutcome`: its result is reported inline. Returns nil
+    /// when the base listing itself fails (server unreachable/unauthorized/not found) —
+    /// distinct from 0, which means the server was reached and had nothing to restore.
+    /// Per-day listing/GET failures still skip-and-continue: a partial restore is a count.
+    func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int? {
         let transport = self.transport
         return await runSerialized {
             let client = WebDAVClient(config: config, transport: transport)
             guard let baseData = try? await client.propfind(config.baseURL, depth: 1)
-            else { return 0 }
+            else { return nil }
 
             let basePath = Self.normalizedPath(config.baseURL.path)
             let days = WebDAVMultistatus.parse(baseData).filter { entry in

@@ -551,11 +551,13 @@ final class AppModel {
 
     /// Settings "Restore from server": additive hydrate, then reload history — same
     /// reasoning as restoreFromICloud (restored days can predate the incremental refresh).
-    func restoreFromWebDAV() async -> Int {
-        guard let dayIndex, let config = WebDAVConfig.load(settings: settings) else { return 0 }
+    /// Nil means the server couldn't be reached/listed at all; 0 means it was reached and
+    /// had nothing new — the Settings view distinguishes the two in its copy.
+    func restoreFromWebDAV() async -> Int? {
+        guard let dayIndex, let config = WebDAVConfig.load(settings: settings) else { return nil }
         let restored = await WebDAVExecutor.shared.restore(
             localRoot: segmentRoot, config: config, dayIndex: dayIndex)
-        if restored > 0 { await loadInitialHistory() }
+        if let n = restored, n > 0 { await loadInitialHistory() }
         return restored
     }
 

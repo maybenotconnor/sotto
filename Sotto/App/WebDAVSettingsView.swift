@@ -131,9 +131,14 @@ struct WebDAVSettingsView: View {
                 restoreResult = "Restoring…"
                 Task {
                     let n = await model.restoreFromWebDAV()
-                    restoreResult = n > 0
-                        ? "Restored \(n) transcript\(n == 1 ? "" : "s")."
-                        : "Nothing new to restore."
+                    restoreResult = switch n {
+                    case nil:
+                        "Couldn't reach the server — check the connection settings."
+                    case 0?:
+                        "Nothing new to restore."
+                    case let n?:
+                        "Restored \(n) transcript\(n == 1 ? "" : "s")."
+                    }
                 }
             }
             if let restoreResult {
