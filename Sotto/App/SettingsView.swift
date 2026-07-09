@@ -26,6 +26,7 @@ struct SettingsView: View {
     @State private var showRemoveBackupConfirm = false
     @State private var showPairSheet = false
     @State private var showForgetConfirm = false
+    @State private var webdavHost = "Not configured"
 
     var body: some View {
         Form {
@@ -53,6 +54,8 @@ struct SettingsView: View {
                 ? "Backed up to iCloud"
                 : "iCloud unavailable — sign in to iCloud in Settings"
             iCloudHasBackups = await model.iCloudHasBackups()
+            webdavHost = settings.webdavServerURL
+                .flatMap { URL(string: $0)?.host() } ?? "Not configured"
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
             usage = model.storageUsage()
             let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
@@ -280,6 +283,15 @@ struct SettingsView: View {
                     }
                 Text("Turning off the toggle just stops backing up — your existing iCloud copies stay. Use this to remove them.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // WebDAV phase (design 2026-07-09): the first "additional backup provider" row.
+            // A NavigationLink per provider IS the reserved dropdown shape — Google Drive
+            // later adds a second row, not a menu rework.
+            NavigationLink {
+                WebDAVSettingsView(model: model)
+            } label: {
+                LabeledContent("WebDAV server", value: webdavHost)
             }
         }
     }

@@ -541,6 +541,37 @@ final class AppModel {
         }.value
     }
 
+    /// Settings "Back up now" (WebDAV): sweep every local transcript (+ audio when enabled)
+    /// onto the configured server. Serialized behind pending event ops on the executor;
+    /// bypasses the Wi-Fi gate (explicit user intent). Not configured → (0, 0).
+    func backupAllToWebDAV() async -> (transcripts: Int, audio: Int) {
+        guard let config = WebDAVConfig.load(settings: settings) else { return (0, 0) }
+        return await WebDAVExecutor.shared.backupAll(localRoot: segmentRoot, config: config)
+    }
+
+    /// Settings "Restore from server": additive hydrate, then reload history — same
+    /// reasoning as restoreFromICloud (restored days can predate the incremental refresh).
+    func restoreFromWebDAV() async -> Int {
+        guard let dayIndex, let config = WebDAVConfig.load(settings: settings) else { return 0 }
+        let restored = await WebDAVExecutor.shared.restore(
+            localRoot: segmentRoot, config: config, dayIndex: dayIndex)
+        if restored > 0 { await loadInitialHistory() }
+        return restored
+    }
+
+    /// Settings "Test connection": PROPFIND Depth 0 against the saved base URL.
+    func testWebDAVConnection() async -> WebDAVTestResult {
+        guard let config = WebDAVConfig.load(settings: settings) else {
+            return .failed("not configured")
+        }
+        return await WebDAVExecutor.shared.testConnection(config: config)
+    }
+
+    /// The executor's last outcome, for the Settings status line.
+    func webdavStatus() async -> WebDAVStatus {
+        await WebDAVExecutor.shared.lastOutcome
+    }
+
     /// M6b Settings "Test key": exercises the candidate Deepgram key against a real ~1 s
     /// sample (0.5 s of silence, encoded exactly like a real segment) rather than trusting
     /// key *format* — the only way to know a BYOK key actually works is to use it. Real
