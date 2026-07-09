@@ -1124,7 +1124,10 @@ struct WebDAVSyncSinkTests {
     }
 
     @Test func sinkForwardsUpsertAndRemoveToTheExecutor() async throws {
-        let transport = FakeWebDAVTransport()
+        // Explicit script: PUT accepts 201 but DELETE rejects it (accept 200/204/404) —
+        // the default 201 fallback would fail both DELETEs (execution-found, same class
+        // as the Task 4 FIFO-test fallback bug).
+        let transport = FakeWebDAVTransport(script: [.status(201), .status(204), .status(204)])
         let executor = WebDAVExecutor(
             transport: transport, monitor: FakeNetworkMonitor(isOnWiFi: true))
         let sink = WebDAVSyncSink(
