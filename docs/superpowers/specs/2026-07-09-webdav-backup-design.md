@@ -140,9 +140,11 @@ transport and `NetworkMonitoring`). Responsibilities:
   (audio may never have been mirrored; file may already be gone — local is truth).
 - **Empty day collections are left behind.** Cleaning them requires listing; that's
   reconcile-phase work.
-- **Missing base** (`MKCOL` for the day also 409s): give up, record `notFound`. We deliberately
-  never auto-create the base collection — a typo'd URL should fail loudly in "Test connection",
-  not silently create a junk folder.
+- **Missing base** (`MKCOL` for the day also 409s): give up, record the failure (as built:
+  the 409 surfaces as `conflict` → "folder could not be created" — folded from the final
+  review; same give-up behavior, clearer copy than the originally-drafted `notFound`). We
+  deliberately never auto-create the base collection — a typo'd URL should fail loudly in
+  "Test connection", not silently create a junk folder.
 - **No retries, URLSession default timeouts.** A failure records the outcome and drops the op
   (best-effort, same contract as iCloud). Implicit retry = next event touching the same file,
   or the sweep.
@@ -169,7 +171,10 @@ is 343 lines and a whole screen deserves its own file:
 - **Status line:** the executor's `lastOutcome` — "Last backup 14:32" / "Failed —
   authentication" / "Skipped — waiting for Wi-Fi".
 - **"Back up now":** runs the sweep; reports counts.
-- **"Restore from server":** §6; reports "Restored N transcript(s)." / "Nothing new to restore."
+- **"Restore from server":** §6; reports "Restored N transcript(s)." / "Nothing new to
+  restore." / "Couldn't reach the server — check the connection settings." (folded from the
+  final review: an unreachable/unauthorized server must be distinguishable from an empty one,
+  the same honest-copy rule the iCloud phase applied to "Back up now").
 - **"Forget this server":** clears the defaults keys + Keychain entry; removes nothing from the
   server, and says so.
 - Copy keeps the privacy framing: transcripts (and audio, if enabled) go to *your own server*;
@@ -182,7 +187,10 @@ recovery path after any outage: walk every `<localRoot>/<day>/*.md` (skip `_day.
 `PUT` each; include `*.m4a` when the audio toggle is on. Returns transcript and audio counts
 for the Settings report. Bypasses the Wi-Fi gate (explicit user intent).
 
-**Restore ("Restore from server")** — additive, idempotent, transcripts only:
+**Restore ("Restore from server")** — additive, idempotent, transcripts only. Returns `nil`
+when the base listing itself fails (unreachable/401/404 — surfaced as "couldn't reach"), `0`
+when the server was reached and nothing was missing; per-day listing/GET failures
+skip-and-continue, so a partial restore still returns its count:
 
 1. `PROPFIND` Depth 1 on the base → collections matching the day shape `\d{4}-\d{2}-\d{2}`.
    Foreign files/folders are ignored — this is what makes "exact URL, no subfolder" safe.
