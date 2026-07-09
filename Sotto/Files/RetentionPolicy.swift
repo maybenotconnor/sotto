@@ -122,6 +122,37 @@ extension SettingsStore {
         nonmutating set { defaults.set(newValue, forKey: "iCloudBackupEnabled") }
     }
 
+    // MARK: WebDAV backup (design 2026-07-09). URL + username + toggles are configuration
+    // and live here; only the app password is a secret and lives in the Keychain
+    // (WebDAVConfig.passwordKeychainKey) — same split as the Deepgram key.
+
+    var webdavServerURL: String? {
+        get { defaults.string(forKey: "webdavServerURL") }
+        nonmutating set { defaults.set(newValue, forKey: "webdavServerURL") }
+    }
+
+    var webdavUsername: String? {
+        get { defaults.string(forKey: "webdavUsername") }
+        nonmutating set { defaults.set(newValue, forKey: "webdavUsername") }
+    }
+
+    /// Pause toggle — default on so saving a config starts backing up immediately; turning
+    /// it off is non-destructive (config + server files stay), like iCloudBackupEnabled.
+    var webdavEnabled: Bool {
+        get {
+            defaults.object(forKey: "webdavEnabled") == nil
+                ? true : defaults.bool(forKey: "webdavEnabled")
+        }
+        nonmutating set { defaults.set(newValue, forKey: "webdavEnabled") }
+    }
+
+    /// Audio is opt-in per server (default off): privacy-first, no surprise multi-MB
+    /// uploads. `bool(forKey:)` returns false when unset — exactly the default.
+    var webdavAudioBackup: Bool {
+        get { defaults.bool(forKey: "webdavAudioBackup") }
+        nonmutating set { defaults.set(newValue, forKey: "webdavAudioBackup") }
+    }
+
     /// M10 engine picker (supersedes M6b's "Use Deepgram" bool). Reads the legacy
     /// `deepgramEnabled` key as a migration fallback so pre-M10 installs keep their choice;
     /// writes only the new key. AppModel's provider closure still requires a Keychain key

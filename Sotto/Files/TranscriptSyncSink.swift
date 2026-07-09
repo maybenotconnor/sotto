@@ -48,13 +48,18 @@ enum SyncSinkRegistry {
     nonisolated(unsafe) static var testSinks: [any TranscriptSyncSink]?
     #endif
 
-    static func activeSinks(_ settings: SettingsStore) -> [any TranscriptSyncSink] {
+    static func activeSinks(
+        _ settings: SettingsStore, keychain: KeychainStore = KeychainStore()
+    ) -> [any TranscriptSyncSink] {
         #if DEBUG
         if let testSinks { return testSinks }
         #endif
         var sinks: [any TranscriptSyncSink] = []
         if settings.iCloudBackupEnabled { sinks.append(ICloudSyncSink()) }
-        // Later phases append here: WebDAVSyncSink(config:), GoogleDriveSyncSink(...)
+        if settings.webdavEnabled, let config = WebDAVConfig.load(settings: settings, keychain: keychain) {
+            sinks.append(WebDAVSyncSink(config: config, wifiOnly: settings.wifiOnlyUpload))
+        }
+        // Later phases append here: GoogleDriveSyncSink(...)
         return sinks
     }
 

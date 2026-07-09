@@ -812,7 +812,9 @@ struct WebDAVExecutorTests {
     }
 
     @Test func opsExecuteStrictlyFIFO() async throws {
-        let transport = FakeWebDAVTransport()
+        // 204 is accepted by both PUT and DELETE; the default 201 fallback would make
+        // DELETE throw server(201) and drop the second DELETE (execution-found bug).
+        let transport = FakeWebDAVTransport(fallback: .status(204))
         let executor = executor(transport)
         let segment = try makeSegment(root: tempDir())
         let config = makeWebDAVConfig()
@@ -1007,7 +1009,7 @@ actor WebDAVExecutor {
         tail = Task { [previous] in
             await previous?.value
             let outcome = await work()
-            await self.record(outcome)
+            self.record(outcome)   // Task{} inherits actor isolation — await would warn
         }
     }
 
@@ -1122,7 +1124,10 @@ struct WebDAVSyncSinkTests {
     }
 
     @Test func sinkForwardsUpsertAndRemoveToTheExecutor() async throws {
-        let transport = FakeWebDAVTransport()
+        // Explicit script: PUT accepts 201 but DELETE rejects it (accept 200/204/404) —
+        // the default 201 fallback would fail both DELETEs (execution-found, same class
+        // as the Task 4 FIFO-test fallback bug).
+        let transport = FakeWebDAVTransport(script: [.status(201), .status(204), .status(204)])
         let executor = WebDAVExecutor(
             transport: transport, monitor: FakeNetworkMonitor(isOnWiFi: true))
         let sink = WebDAVSyncSink(
@@ -1253,7 +1258,7 @@ git commit -m "feat: WebDAVSyncSink + registry wiring behind webdavEnabled/confi
 
 **Interfaces:**
 - Consumes: `runSerialized`/`putCreatingDay`/`record` (Task 4), `WebDAVMultistatus` (Task 3), `DayIndexStore` (existing actor — `init(rootDirectory:)`, `func rebuildAndPersist(dayDirectory: URL) -> DayIndex`, `func index(forDay:)`).
-- Produces: `func backupAll(localRoot: URL, config: WebDAVConfig) async -> (transcripts: Int, audio: Int)`; `func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int`.
+- Produces: `func backupAll(localRoot: URL, config: WebDAVConfig) async -> (transcripts: Int, audio: Int)`; `func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int?` (folded from the final-review fix wave: `nil` = base listing failed [unreachable/401/404], `0` = reached but nothing missing — so the Settings copy can be honest; per-day failures still skip-and-continue).
 
 - [ ] **Step 1: Write the failing tests** (append to `WebDAVExecutorTests`)
 
@@ -1404,13 +1409,13 @@ git commit -m "feat: WebDAVSyncSink + registry wiring behind webdavEnabled/confi
         #expect(await transport2.recorded.map(\.method) == ["PROPFIND", "PROPFIND"])   // no GETs
     }
 
-    @Test func restoreSurvivesAnUnreachableServer() async throws {
+    @Test func restoreReportsUnreachableServerAsNil() async throws {
         let transport = FakeWebDAVTransport(fallback: .error(URLError(.cannotConnectToHost)))
-        let executor = executor(transport)
+        let executor = makeExecutor(transport)
         let root = tempDir()
         let restored = await executor.restore(
             localRoot: root, config: makeWebDAVConfig(), dayIndex: DayIndexStore(rootDirectory: root))
-        #expect(restored == 0)
+        #expect(restored == nil)   // nil = couldn't list; 0 would mean reached-but-empty
     }
 ```
 
@@ -1468,12 +1473,12 @@ Expected: build FAILURE — `backupAll`/`restore` not defined on `WebDAVExecutor
     /// local file; rebuilds `_day.json` per touched day (restored conversations get
     /// hasAudio = false from the rebuilder — audio is not restored, same asymmetry as
     /// iCloud). Doesn't touch `lastOutcome`: its result is reported inline.
-    func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int {
+    func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int? {
         let transport = self.transport
         return await runSerialized {
             let client = WebDAVClient(config: config, transport: transport)
             guard let baseData = try? await client.propfind(config.baseURL, depth: 1)
-            else { return 0 }
+            else { return nil }   // base listing failed — distinct from "reached, empty" (0)
 
             let basePath = Self.normalizedPath(config.baseURL.path)
             let days = WebDAVMultistatus.parse(baseData).filter { entry in
@@ -1567,11 +1572,11 @@ git commit -m "feat: WebDAV backupAll sweep + additive shape-filtered restore"
 
     /// Settings "Restore from server": additive hydrate, then reload history — same
     /// reasoning as restoreFromICloud (restored days can predate the incremental refresh).
-    func restoreFromWebDAV() async -> Int {
-        guard let dayIndex, let config = WebDAVConfig.load(settings: settings) else { return 0 }
+    func restoreFromWebDAV() async -> Int? {
+        guard let dayIndex, let config = WebDAVConfig.load(settings: settings) else { return nil }
         let restored = await WebDAVExecutor.shared.restore(
             localRoot: segmentRoot, config: config, dayIndex: dayIndex)
-        if restored > 0 { await loadInitialHistory() }
+        if let n = restored, n > 0 { await loadInitialHistory() }
         return restored
     }
 
@@ -1725,10 +1730,13 @@ struct WebDAVSettingsView: View {
             Button("Restore from server") {
                 restoreResult = "Restoring…"
                 Task {
-                    let n = await model.restoreFromWebDAV()
-                    restoreResult = n > 0
-                        ? "Restored \(n) transcript\(n == 1 ? "" : "s")."
-                        : "Nothing new to restore."
+                    // nil = couldn't reach/list the server; 0 = reached, nothing missing
+                    // (final-review fold — honest copy, like iCloud's "Back up now").
+                    restoreResult = switch await model.restoreFromWebDAV() {
+                    case 0?: "Nothing new to restore."
+                    case let n?: "Restored \(n) transcript\(n == 1 ? "" : "s")."
+                    case nil: "Couldn't reach the server — check the connection settings."
+                    }
                 }
             }
             if let restoreResult {
