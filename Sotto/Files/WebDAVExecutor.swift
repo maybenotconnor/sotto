@@ -102,6 +102,112 @@ actor WebDAVExecutor {
         }
     }
 
+    /// Settings "Back up now" (design §6): first-configure backfill, audio-toggle backfill,
+    /// and the universal recovery path. Walks `<localRoot>/<day>/` two levels (the store
+    /// layout is exactly two levels; skips `_day.json`/`.caf` by extension), PUTs every
+    /// .md — and .m4a when the config says so. Per-file failures skip and continue; the
+    /// first failure decides the recorded status.
+    func backupAll(localRoot: URL, config: WebDAVConfig) async -> (transcripts: Int, audio: Int) {
+        let transport = self.transport
+        return await runSerialized {
+            let client = WebDAVClient(config: config, transport: transport)
+            var transcripts = 0, audio = 0
+            var firstFailure: (any Error)?
+            let days = (try? FileManager.default.contentsOfDirectory(
+                at: localRoot, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+            for day in days {
+                guard (try? day.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                      let files = try? FileManager.default.contentsOfDirectory(
+                          at: day, includingPropertiesForKeys: nil) else { continue }
+                for file in files {
+                    let contentType: String? = switch file.pathExtension {
+                    case "md": "text/markdown"
+                    case "m4a" where config.audioEnabled: "audio/mp4"
+                    default: nil   // _day.json, .caf, audio when disabled
+                    }
+                    guard let contentType else { continue }
+                    do {
+                        try await Self.putCreatingDay(
+                            client, base: config.baseURL, day: day.lastPathComponent,
+                            file: file, contentType: contentType)
+                        if contentType == "text/markdown" { transcripts += 1 } else { audio += 1 }
+                    } catch {
+                        if firstFailure == nil { firstFailure = error }
+                    }
+                }
+            }
+            await self.record(firstFailure.map { .failure($0) } ?? .ok)
+            return (transcripts, audio)
+        }
+    }
+
+    /// Settings "Restore from server" (design §6): additive, idempotent, transcripts only.
+    /// Depth-1 PROPFIND walk (never infinity — servers commonly disable it); only
+    /// Sotto-shaped paths (`yyyy-MM-dd/HH-mm-ss.md`) are considered — foreign files are
+    /// invisible, which is what makes "exact URL, no subfolder" safe. Never overwrites a
+    /// local file; rebuilds `_day.json` per touched day (restored conversations get
+    /// hasAudio = false from the rebuilder — audio is not restored, same asymmetry as
+    /// iCloud). Doesn't touch `lastOutcome`: its result is reported inline.
+    func restore(localRoot: URL, config: WebDAVConfig, dayIndex: DayIndexStore) async -> Int {
+        let transport = self.transport
+        return await runSerialized {
+            let client = WebDAVClient(config: config, transport: transport)
+            guard let baseData = try? await client.propfind(config.baseURL, depth: 1)
+            else { return 0 }
+
+            let basePath = Self.normalizedPath(config.baseURL.path)
+            let days = WebDAVMultistatus.parse(baseData).filter { entry in
+                entry.isCollection
+                    && Self.normalizedPath(entry.href) != basePath   // skip the base itself
+                    && Self.lastComponent(entry.href)
+                        .wholeMatch(of: /\d{4}-\d{2}-\d{2}/) != nil
+            }
+
+            var restored = 0
+            var touchedDays: Set<String> = []
+            for dayEntry in days {
+                let day = Self.lastComponent(dayEntry.href)
+                let dayURL = config.baseURL.appendingPathComponent(day, isDirectory: true)
+                guard let listing = try? await client.propfind(dayURL, depth: 1)
+                else { continue }
+                let files = WebDAVMultistatus.parse(listing).filter { entry in
+                    !entry.isCollection
+                        && Self.lastComponent(entry.href)
+                            .wholeMatch(of: /\d{2}-\d{2}-\d{2}\.md/) != nil
+                }
+                for file in files {
+                    let name = Self.lastComponent(file.href)
+                    let localDay = localRoot.appendingPathComponent(day, isDirectory: true)
+                    let localMD = localDay.appendingPathComponent(name)
+                    guard !FileManager.default.fileExists(atPath: localMD.path)
+                    else { continue }   // never overwrite — local is canonical
+                    guard let data = try? await client.get(
+                        dayURL.appendingPathComponent(name)) else { continue }
+                    try? FileManager.default.createDirectory(
+                        at: localDay, withIntermediateDirectories: true)
+                    guard (try? data.write(to: localMD)) != nil else { continue }
+                    restored += 1
+                    touchedDays.insert(day)
+                }
+            }
+
+            for day in touchedDays {
+                _ = await dayIndex.rebuildAndPersist(
+                    dayDirectory: localRoot.appendingPathComponent(day, isDirectory: true))
+            }
+            return restored
+        }
+    }
+
+    /// "/a/b/" and "/a/b" are the same collection.
+    private static func normalizedPath(_ path: String) -> String {
+        path.hasSuffix("/") ? String(path.dropLast()) : path
+    }
+
+    private static func lastComponent(_ href: String) -> String {
+        href.split(separator: "/").last.map(String.init) ?? ""
+    }
+
     /// Test synchronization only: awaits everything enqueued so far.
     func drain() async {
         await tail?.value
