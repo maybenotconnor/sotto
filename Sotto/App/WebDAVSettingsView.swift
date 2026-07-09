@@ -78,7 +78,6 @@ struct WebDAVSettingsView: View {
             formNote = "Username and app password are required."
             return
         }
-        _ = url
         model.settings.webdavServerURL = trimmedURL
         model.settings.webdavUsername = trimmedUser
         KeychainStore().set(appPassword, for: WebDAVConfig.passwordKeychainKey)
