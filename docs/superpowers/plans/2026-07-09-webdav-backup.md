@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Test command: `xcodebuild test -project Sotto.xcodeproj -scheme Sotto -destination 'platform=iOS Simulator,name=iPhone Air' 2>&1 | tail -5` → expect `** TEST SUCCEEDED **`. Narrow a run with `-only-testing:SottoTests/<SuiteName>`.
-- After creating any new file: `xcodegen generate` (project.yml globs `Sotto/` and `SottoTests/`), then build/test.
+- After creating any new file: `xcodegen generate` (project.yml globs `Sotto/` and `SottoTests/`), then build/test. `Sotto.xcodeproj` is **gitignored** — never `git add` it.
 - Zero new warnings. Swift 6; default actor isolation is `nonisolated` — annotate deliberately.
 - Commit messages: plain conventional style (`feat:`, `test:`, `docs:`), **no attribution trailers**.
 - `_day.json`, `.caf` must never be uploaded. Audio (`.m4a`) uploads only when `webdavAudioBackup` is on.
@@ -207,7 +207,7 @@ Expected: `** TEST SUCCEEDED **`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sotto/Files/WebDAVConfig.swift Sotto/Files/RetentionPolicy.swift SottoTests/SettingsStoreWebDAVTests.swift Sotto.xcodeproj
+git add Sotto/Files/WebDAVConfig.swift Sotto/Files/RetentionPolicy.swift SottoTests/SettingsStoreWebDAVTests.swift
 git commit -m "feat: SettingsStore WebDAV accessors + WebDAVConfig.load (defaults/Keychain split)"
 ```
 
@@ -510,7 +510,7 @@ Expected: `** TEST SUCCEEDED **`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sotto/Files/WebDAVClient.swift SottoTests/WebDAVTestSupport.swift SottoTests/WebDAVClientTests.swift Sotto.xcodeproj
+git add Sotto/Files/WebDAVClient.swift SottoTests/WebDAVTestSupport.swift SottoTests/WebDAVClientTests.swift
 git commit -m "feat: WebDAVClient — transport seam, five verbs, error taxonomy"
 ```
 
@@ -693,7 +693,7 @@ Expected: `** TEST SUCCEEDED **`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sotto/Files/WebDAVMultistatus.swift SottoTests/WebDAVMultistatusTests.swift Sotto.xcodeproj
+git add Sotto/Files/WebDAVMultistatus.swift SottoTests/WebDAVMultistatusTests.swift
 git commit -m "feat: WebDAVMultistatus — namespace-agnostic PROPFIND response parser"
 ```
 
@@ -1073,7 +1073,7 @@ Expected: `** TEST SUCCEEDED **`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sotto/Files/WebDAVExecutor.swift SottoTests/WebDAVExecutorTests.swift Sotto.xcodeproj
+git add Sotto/Files/WebDAVExecutor.swift SottoTests/WebDAVExecutorTests.swift
 git commit -m "feat: WebDAVExecutor — FIFO pipeline, 409 self-heal, Wi-Fi gate, status line"
 ```
 
@@ -1239,7 +1239,7 @@ Expected: `** TEST SUCCEEDED **`
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sotto/Files/WebDAVSyncSink.swift Sotto/Files/TranscriptSyncSink.swift SottoTests/WebDAVSyncSinkTests.swift Sotto.xcodeproj
+git add Sotto/Files/WebDAVSyncSink.swift Sotto/Files/TranscriptSyncSink.swift SottoTests/WebDAVSyncSinkTests.swift
 git commit -m "feat: WebDAVSyncSink + registry wiring behind webdavEnabled/config"
 ```
 
@@ -1815,7 +1815,7 @@ Expected: `** TEST SUCCEEDED **`, zero new warnings (check the build log section
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sotto/App/AppModel.swift Sotto/App/WebDAVSettingsView.swift Sotto/App/SettingsView.swift Sotto.xcodeproj
+git add Sotto/App/AppModel.swift Sotto/App/WebDAVSettingsView.swift Sotto/App/SettingsView.swift
 git commit -m "feat: WebDAV Settings screen + AppModel backup/restore/test entry points"
 ```
 
