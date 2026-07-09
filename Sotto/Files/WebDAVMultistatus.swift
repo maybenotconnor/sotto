@@ -20,13 +20,13 @@ enum WebDAVMultistatus {
         return reader.entries
     }
 
-    nonisolated private final class Reader: NSObject, XMLParserDelegate {
+    private final class Reader: NSObject, XMLParserDelegate {
         var entries: [Entry] = []
         private var href = ""
         private var inHref = false
         private var isCollection = false
 
-        nonisolated func parser(
+        func parser(
             _ parser: XMLParser, didStartElement elementName: String,
             namespaceURI: String?, qualifiedName: String?,
             attributes attributeDict: [String: String]
@@ -40,11 +40,11 @@ enum WebDAVMultistatus {
             }
         }
 
-        nonisolated func parser(_ parser: XMLParser, foundCharacters string: String) {
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
             if inHref { href += string }
         }
 
-        nonisolated func parser(
+        func parser(
             _ parser: XMLParser, didEndElement elementName: String,
             namespaceURI: String?, qualifiedName: String?
         ) {
