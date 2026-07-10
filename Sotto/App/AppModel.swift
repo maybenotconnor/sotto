@@ -112,7 +112,7 @@ final class AppModel {
     private let segmentRootOverride: URL?
     /// Test seam mirroring `segmentRootOverride`: when set, Omi pairing reads/writes this
     /// store instead of `UserDefaults.standard`.
-    private let omiStoreOverride: OmiDeviceStore?
+    private let omiStoreOverride: PairedDeviceStore?
     /// Test seam mirroring `omiStoreOverride`: when set, `composePipeline` builds the paired
     /// Omi's `OmiAudioSource` over this transport instead of a real `CoreBluetoothOmiTransport`
     /// — lets tests drive connection/battery events (e.g. the Critical #1 re-subscribe-across-
@@ -176,7 +176,7 @@ final class AppModel {
         assetInstaller: (any SpeechAssetInstalling)? = nil,
         networkMonitor: (any NetworkMonitoring)? = nil,
         segmentRootOverride: URL? = nil,
-        omiStoreOverride: OmiDeviceStore? = nil,
+        omiStoreOverride: PairedDeviceStore? = nil,
         omiTransportOverride: (any OmiTransport)? = nil
     ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
@@ -881,7 +881,7 @@ final class AppModel {
         // M12: auto-prefer a paired Omi (spec "Selection model") — failover to the phone
         // mic is the selection logic itself; no paired device ⇒ exactly the old
         // construction path (byte-identical behavior for phone-mic-only users).
-        let omiStore = omiStoreOverride ?? OmiDeviceStore()
+        let omiStore = omiStoreOverride ?? PairedDeviceStore()
         var omiSource: OmiAudioSource?
         var plainPhoneMic: PhoneMicAudioSource?
         let source: any AudioSource
@@ -1022,8 +1022,8 @@ final class AppModel {
     /// `rebuildIfSourceShapeChanged()`, called from every place that can bring the pipeline
     /// back to idle — not on the next relaunch.
     func pairOmi(_ discovery: WearableDiscovery) async {
-        (omiStoreOverride ?? OmiDeviceStore()).pair(
-            PairedOmiDevice(id: discovery.id, name: discovery.name))
+        (omiStoreOverride ?? PairedDeviceStore()).pair(
+            PairedDevice(id: discovery.id, name: discovery.name, kind: discovery.kind))
         pairedOmiName = discovery.name
         await rebuildPipelineIfIdle()
     }
@@ -1033,7 +1033,7 @@ final class AppModel {
     /// showing a device we've just told the user we'd stop tracking, even if the actual source
     /// swap has to wait for the current session to end (see `pairOmi` above for the same fix).
     func forgetOmi() async {
-        (omiStoreOverride ?? OmiDeviceStore()).forget()
+        (omiStoreOverride ?? PairedDeviceStore()).forget()
         pairedOmiName = nil
         omiBatteryLevel = nil
         omiConnectionState = nil
@@ -1074,7 +1074,7 @@ final class AppModel {
     /// `rebuildPipelineIfIdle`/`composePipeline` path rather than adding a second one.
     private func rebuildIfSourceShapeChanged() async {
         guard pipeline?.status == .idle else { return }
-        let pairedNow = (omiStoreOverride ?? OmiDeviceStore()).device != nil
+        let pairedNow = (omiStoreOverride ?? PairedDeviceStore()).device != nil
         guard pairedNow != composedWithOmi else { return }
         await rebuildPipelineIfIdle()
     }

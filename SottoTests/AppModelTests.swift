@@ -354,7 +354,7 @@ struct AppModelTests {
         let suite = UserDefaults(suiteName: "omi-model-tests-\(suiteSuffix)-\(UUID().uuidString)")!
         return AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
-            omiStoreOverride: OmiDeviceStore(defaults: suite),
+            omiStoreOverride: PairedDeviceStore(defaults: suite),
             omiTransportOverride: omiTransportOverride)
     }
 
@@ -460,8 +460,8 @@ struct AppModelTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: "omi-model-tests-resubscribe-\(UUID().uuidString)")!
-        let store = OmiDeviceStore(defaults: suite)
-        store.pair(PairedOmiDevice(id: UUID(), name: "Resub Omi"))
+        let store = PairedDeviceStore(defaults: suite)
+        store.pair(PairedDevice(id: UUID(), name: "Resub Omi", kind: .omi))
         let transport = FakeOmiTransport()
         let model = AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
@@ -507,8 +507,8 @@ struct AppModelTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: "omi-model-tests-forget-live-\(UUID().uuidString)")!
-        let store = OmiDeviceStore(defaults: suite)
-        store.pair(PairedOmiDevice(id: UUID(), name: "Live Omi"))
+        let store = PairedDeviceStore(defaults: suite)
+        store.pair(PairedDevice(id: UUID(), name: "Live Omi", kind: .omi))
         let transport = FakeOmiTransport()
         let model = AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
