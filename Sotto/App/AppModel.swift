@@ -63,7 +63,7 @@ final class AppModel {
     /// M12 Task 12 (home banner): the Bluetooth-off/unauthorized banner shows only when an
     /// Omi is actually paired (unpaired users never see Bluetooth chatter) AND the reason is
     /// one the user can act on via Settings — `.unsupported` has no Settings toggle to fix,
-    /// so it's deliberately excluded here (Settings' `omiStatusLabel` still surfaces it as
+    /// so it's deliberately excluded here (Settings' `deviceStatusLabel` still surfaces it as
     /// status text, just not as an actionable banner).
     nonisolated static func bluetoothBannerReason(
         pairedDeviceName: String?, connectionState: DeviceConnectionState?
@@ -1018,7 +1018,14 @@ final class AppModel {
         deviceBatteryLevel = level
         if level <= WearableConstants.lowBatteryThresholdPercent, !lowBatteryNotified {
             lowBatteryNotified = true
-            Task { await UserNotificationScheduler().scheduleOmiLowBatteryNotification(level: level) }
+            // Battery readings only flow while a wearable is composed, so the kind is
+            // always set here; skipping on nil beats inventing a family name.
+            if let kind = pairedDeviceKind {
+                Task {
+                    await UserNotificationScheduler()
+                        .scheduleLowBatteryNotification(deviceName: kind.displayName, level: level)
+                }
+            }
         }
         if level > WearableConstants.lowBatteryThresholdPercent + 10 { lowBatteryNotified = false }
     }

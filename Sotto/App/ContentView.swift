@@ -359,11 +359,14 @@ private struct HomeScreen: View {
         // phone mic regardless, so this is informational, not blocking.
         if let reason = AppModel.bluetoothBannerReason(
             pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
+            // pairedDeviceKind is non-nil whenever the banner shows (the banner requires a
+            // paired name, and name/kind are set together); the fallback is compiler-required.
+            let deviceName = model.pairedDeviceKind?.displayName ?? "device"
             VStack(spacing: 6) {
                 NoticeBanner(
                     text: reason == .poweredOff
-                        ? "Bluetooth is off — your Omi can't connect. Recording uses the iPhone mic."
-                        : "Sotto needs Bluetooth permission to use your Omi. Recording uses the iPhone mic.",
+                        ? "Bluetooth is off — your \(deviceName) can't connect. Recording uses the iPhone mic."
+                        : "Sotto needs Bluetooth permission to use your \(deviceName). Recording uses the iPhone mic.",
                     color: .red)
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {

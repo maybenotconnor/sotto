@@ -224,9 +224,9 @@ actor FakeNotificationScheduler: NotificationScheduling {
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
     func schedulePausedNotification() { scheduled += 1 }
     func cancelPausedNotification() { cancelled += 1 }
-    func scheduleSourceFallbackNotification() { sourceFallbackCount += 1 }
-    func scheduleCaptureUnavailableNotification() { captureUnavailableCount += 1 }
-    func scheduleOmiLowBatteryNotification(level: Int) { lowBatteryLevels.append(level) }
+    func scheduleSourceFallbackNotification(deviceName: String) { sourceFallbackCount += 1 }
+    func scheduleCaptureUnavailableNotification(deviceName: String) { captureUnavailableCount += 1 }
+    func scheduleLowBatteryNotification(deviceName: String, level: Int) { lowBatteryLevels.append(level) }
 }
 
 /// NotificationScheduling whose cancel suspends until released — for ordering races.
@@ -237,9 +237,9 @@ actor GatedNotificationScheduler: NotificationScheduling {
 
     func requestAuthorizationIfNeeded() {}
     func schedulePausedNotification() {}
-    func scheduleSourceFallbackNotification() {}
-    func scheduleCaptureUnavailableNotification() {}
-    func scheduleOmiLowBatteryNotification(level: Int) {}
+    func scheduleSourceFallbackNotification(deviceName: String) {}
+    func scheduleCaptureUnavailableNotification(deviceName: String) {}
+    func scheduleLowBatteryNotification(deviceName: String, level: Int) {}
 
     func cancelPausedNotification() async {
         cancelWasRequested = true

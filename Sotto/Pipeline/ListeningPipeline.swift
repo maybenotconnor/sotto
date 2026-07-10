@@ -352,8 +352,11 @@ final class ListeningPipeline {
             hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
-                log("Omi disconnected — continuing on iPhone mic")
-                await notifications?.scheduleSourceFallbackNotification()
+                // `self.source.sourceType` is the preferred wearable's type on a switching
+                // source — the family name for copy; `source` here is the NEW active source.
+                log("\(self.source.sourceType.displayName) disconnected — continuing on \(source.displayName)")
+                await notifications?.scheduleSourceFallbackNotification(
+                    deviceName: self.source.sourceType.displayName)
             }
         case .wearableRecovered:
             guard let source = change.source else { return }
@@ -362,14 +365,15 @@ final class ListeningPipeline {
             hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
-                log("Omi reconnected")
+                log("\(self.source.sourceType.displayName) reconnected")
             }
         case .captureUnavailable:
             activeSourceType = nil
             if !hasNotifiedCaptureUnavailable {
                 hasNotifiedCaptureUnavailable = true
-                log("Nothing capturing — Omi gone and mic unavailable")
-                await notifications?.scheduleCaptureUnavailableNotification()
+                log("Nothing capturing — \(source.sourceType.displayName) gone and mic unavailable")
+                await notifications?.scheduleCaptureUnavailableNotification(
+                    deviceName: source.sourceType.displayName)
             }
         }
         pushLiveActivitySource()
@@ -386,14 +390,14 @@ final class ListeningPipeline {
     }
 
     /// M12 Task 12: the Live Activity only gets a source label when the source can actually
-    /// switch (i.e. an Omi is paired). `activeSourceType` is stamped for a plain phone-mic
+    /// switch (i.e. a wearable is paired). `activeSourceType` is stamped for a plain phone-mic
     /// pipeline too (the recorder's segment tagging needs the accurate value — see that
     /// property's doc comment), but surfacing "iPhone mic" on every lock-screen update would
-    /// be new, unwanted chatter for the vast majority of users who never paired an Omi. This
-    /// pipeline has no direct handle on `AppModel.pairedDeviceName` (mirrors the home header's
-    /// gate — ContentView), but "source can switch" is an equivalent proxy here: only
+    /// be new, unwanted chatter for the vast majority of users who never paired a wearable.
+    /// This pipeline has no direct handle on `AppModel.pairedDeviceName` (mirrors the home
+    /// header's gate — ContentView), but "source can switch" is an equivalent proxy here: only
     /// `FailoverAudioSource` conforms to `SourceSwitchingAudioSource`, and `AppModel` only
-    /// constructs one when an Omi is actually paired.
+    /// constructs one when a wearable is actually paired.
     private var liveActivitySourceLabel: String? {
         (source is any SourceSwitchingAudioSource) ? activeSourceType?.displayName : nil
     }
