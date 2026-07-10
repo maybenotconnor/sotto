@@ -9,7 +9,7 @@ protocol LiveActivityControlling: AnyObject {
     func sessionStarted(at date: Date)
     /// M12: `sourceLabel` mirrors the pipeline's `activeSourceType.displayName` (nil pre-M12,
     /// while nothing is capturing, or — even while capturing — for a plain phone-mic-only
-    /// session with no Omi paired, since there's no source to switch between). Use the
+    /// session with no wearable paired, since there's no source to switch between). Use the
     /// `update(phase:conversationCount:)` extension overload below when the caller has no
     /// source label to report.
     func update(phase: SottoActivityAttributes.Phase, conversationCount: Int, sourceLabel: String?)

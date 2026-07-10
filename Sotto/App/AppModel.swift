@@ -60,8 +60,8 @@ final class AppModel {
         return .eligible(dayDirectory: picked[0].section.dayDirectory, entries: entries)
     }
 
-    /// M12 Task 12 (home banner): the Bluetooth-off/unauthorized banner shows only when an
-    /// Omi is actually paired (unpaired users never see Bluetooth chatter) AND the reason is
+    /// M12 Task 12 (home banner): the Bluetooth-off/unauthorized banner shows only when a
+    /// wearable is actually paired (unpaired users never see Bluetooth chatter) AND the reason is
     /// one the user can act on via Settings — `.unsupported` has no Settings toggle to fix,
     /// so it's deliberately excluded here (Settings' `deviceStatusLabel` still surfaces it as
     /// status text, just not as an actionable banner).
@@ -861,7 +861,7 @@ final class AppModel {
         }
     }
 
-    /// M12: builds the audio source (the paired-Omi failover branch, or the plain phone
+    /// M12: builds the audio source (the paired-wearable failover branch, or the plain phone
     /// mic), a fresh `ListeningPipeline`, and its `AudioSessionObserver` — reusing the
     /// passed-in LONG-LIVED `recorder` (and, through its already-installed segment handler,
     /// the day index + transcription queue wired up once in `performSetUp`) rather than
@@ -923,9 +923,9 @@ final class AppModel {
         pipeline = newPipeline
 
         let sessionObserver = AudioSessionObserver(backgroundTasks: UIKitBackgroundTasks())
-        // Non-nil only for the composed (Omi + phone mic) path — its authoritative, async
+        // Non-nil only for the composed (wearable + phone mic) path — its authoritative, async
         // `activeSourceType` decides whether an AVAudioSession event is even relevant: while
-        // the Omi (a BLE peripheral, not an AVAudioSession input route) is capturing, a phone
+        // the wearable (a BLE peripheral, not an AVAudioSession input route) is capturing, a phone
         // interruption/route-change/media-services-reset must NOT park a perfectly healthy
         // recording. `nil` on the plain phone-mic path ⇒ every guard below is skipped and
         // behavior is exactly what it was before M12.
@@ -945,7 +945,7 @@ final class AppModel {
             do {
                 if let switching {
                     // Forwards to the phone mic's tap rebuild only when it's the active
-                    // source; a no-op when the Omi is active (see `handleRouteChange`).
+                    // source; a no-op when the wearable is active (see `handleRouteChange`).
                     try await switching.handleRouteChange()
                 } else {
                     try await plainPhoneMic?.rebuildTap()
@@ -967,14 +967,15 @@ final class AppModel {
         sessionObserver.startObserving()
         observer = sessionObserver
 
-        // Battery + connection observation (Settings, Task 11): only meaningful when an Omi
-        // is actually composed into the source. There is no BLE traffic — and so nothing for
-        // these streams to carry — until the pipeline is actually `start()`-ed (that's what
-        // makes `OmiAudioSource` connect the transport); status/battery are only ever live
-        // DURING a session, not before one starts (M12 final review Critical #1 — corrects an
-        // earlier, inaccurate version of this comment that claimed otherwise).
+        // Battery + connection observation (Settings, Task 11): only meaningful when a
+        // wearable is actually composed into the source. There is no BLE traffic — and so
+        // nothing for these streams to carry — until the pipeline is actually `start()`-ed
+        // (that's what makes the wearable source connect its transport); status/battery are
+        // only ever live DURING a session, not before one starts (M12 final review Critical
+        // #1 — corrects an earlier, inaccurate version of this comment that claimed
+        // otherwise).
         //
-        // `OmiAudioSource.stop()` (called on every session stop AND every park — including a
+        // The wearable source's `stop()` (called on every session stop AND every park — including a
         // phone call interruption, via `ListeningPipeline.performHalt`) finishes both of these
         // streams. Without the re-subscribe loop below, the very first stop/interruption would
         // permanently kill status updates for the rest of the process: Settings would freeze,

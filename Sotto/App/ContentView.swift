@@ -273,7 +273,7 @@ private struct HomeScreen: View {
                 Circle().fill(headerState.dotColor).frame(width: 12, height: 12)
             }
             VStack(alignment: .leading, spacing: 1) {
-                // M12 Task 12: source suffix only when an Omi is paired — phone-mic-only
+                // M12 Task 12: source suffix only when a wearable is paired — phone-mic-only
                 // users see the exact same label as before (SPEC "UI & surfacing").
                 if let source = pipeline.activeSourceType, model.pairedDeviceName != nil {
                     Text("\(headerState.label) · \(source.displayName)").font(.headline)

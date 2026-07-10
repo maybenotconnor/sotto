@@ -58,7 +58,7 @@ final class ListeningPipeline {
     private var pendingPark: HaltReason?
     /// Dedup for the loud "nothing capturing" notification. `activeSourceType == nil` is
     /// overloaded (both "never activated" and "already notified"), so a nil-check alone would
-    /// silently drop the very FIRST `.captureUnavailable` event on a cold start (Omi loses the
+    /// silently drop the very FIRST `.captureUnavailable` event on a cold start (the wearable loses the
     /// startup race AND phoneMic.start() throws immediately) — the one signal that nothing is
     /// recording. Cleared on every successful activation and on a full stop().
     private var hasNotifiedCaptureUnavailable = false
@@ -96,7 +96,7 @@ final class ListeningPipeline {
         // Subscribe to source changes BEFORE source.start(): sourceChanges() registers its
         // continuation on first demand inside this task, and a change emitted before that
         // registration goes to zero continuations and is LOST — including the very first
-        // activation when the source resolves fast (Omi already streaming at startup), which
+        // activation when the source resolves fast (wearable already streaming at startup), which
         // would leave activeSourceType nil and the recorder's source label stale for the
         // whole session. Creating the task here enqueues it ahead of start()'s resume on the
         // MainActor, so the subscription lands before any event the started source can emit.

@@ -17,6 +17,7 @@
 - All user-facing copy is fixed by the spec — reuse the existing banner strings verbatim; new strings are exactly `"Ready to listen"` and `"On-device transcription model not downloaded."`.
 - Commit messages: plain, imperative, no attribution trailers of any kind.
 - Behavior is unchanged. This is a re-skin: same state machine, same banner trigger conditions, same actions.
+- Base branch: written against `refactor/wearable-seam` at `c0e9d28` (post Omi-generalization). The wearable APIs are `model.pairedDeviceName`, `model.deviceConnectionState`, `model.pairedDeviceKind`, and `AppModel.bluetoothBannerReason(pairedDeviceName:connectionState:)`. If executing on a different base, re-verify these names first.
 
 ---
 
@@ -318,7 +319,7 @@ git commit -m "refactor: extract HeaderState into HeroCard.swift with pure deriv
 - Modify: `Sotto/App/ContentView.swift`
 
 **Interfaces:**
-- Consumes: `HeaderState` (Task 2), `Color("Ink")`/`Color("Porcelain")` (Task 1), plus existing API already used by the old `statusCard`: `pipeline.start()`, `pipeline.resumeFromInterruption()`, `model.stopListening()`, `pipeline.activeSourceType?.displayName`, `model.pairedOmiName`.
+- Consumes: `HeaderState` (Task 2), `Color("Ink")`/`Color("Porcelain")` (Task 1), plus existing API already used by the old `statusCard`: `pipeline.start()`, `pipeline.resumeFromInterruption()`, `model.stopListening()`, `pipeline.activeSourceType?.displayName`, `model.pairedDeviceName`.
 - Produces: `HeroCard(model:pipeline:micDenied:)` — `struct HeroCard: View { let model: AppModel; let pipeline: ListeningPipeline; let micDenied: Bool }`. Task 4 appends footnotes to it.
 
 - [ ] **Step 1: Append the card view and PulsingDot to `HeroCard.swift`**
@@ -366,10 +367,10 @@ struct HeroCard: View {
         .background(Color("Porcelain").opacity(0.55), in: .rect(cornerRadius: 26))
     }
 
-    /// M12: source suffix only when an Omi is paired — phone-mic-only users see the
+    /// M12: source suffix only when a wearable is paired — phone-mic-only users see the
     /// exact same label as before (SPEC "UI & surfacing"; carried over from statusCard).
     private var stateWord: Text {
-        if let source = pipeline.activeSourceType, model.pairedOmiName != nil {
+        if let source = pipeline.activeSourceType, model.pairedDeviceName != nil {
             return Text("\(state.label) · \(source.displayName)")
         }
         return Text(state.label)
@@ -483,7 +484,7 @@ git commit -m "feat: replace Sotto title and status row with porcelain hero card
 - Modify: `Sotto/App/ContentView.swift`
 
 **Interfaces:**
-- Consumes: existing notice API already used by the old `banners` view: `model.recoveryNotice`, `model.dismissRecoveryNotice()`, `model.assetState` (cases `.downloading(fraction)`, `.notInstalled`, `.failed`, `.unsupported`), `model.downloadSpeechModel()`, `model.settings.transcriptionEngine`, `TranscriptionBackend`, `AppModel.bluetoothBannerReason(pairedOmiName:connectionState:)` (returns `.poweredOff` or other), `pipeline.diskGuardActive`, `UIApplication.openSettingsURLString`.
+- Consumes: existing notice API already used by the old `banners` view: `model.recoveryNotice`, `model.dismissRecoveryNotice()`, `model.assetState` (cases `.downloading(fraction)`, `.notInstalled`, `.failed`, `.unsupported`), `model.downloadSpeechModel()`, `model.settings.transcriptionEngine`, `TranscriptionBackend`, `AppModel.bluetoothBannerReason(pairedDeviceName:connectionState:)` (returns `.poweredOff` or other), `model.pairedDeviceKind?.displayName`, `pipeline.diskGuardActive`, `UIApplication.openSettingsURLString`.
 - Produces: nothing new outside `HeroCard` — the card is now self-contained.
 
 Banner copy is reused **verbatim** from `ContentView.swift:310-378`. Trigger conditions are identical; only presentation changes (footnote rows under a divider instead of full-weight list rows).
@@ -556,12 +557,15 @@ Then add to `HeroCard`:
                         actionLabel: "Open Settings", action: openSettings)
                 }
                 if let reason = AppModel.bluetoothBannerReason(
-                    pairedOmiName: model.pairedOmiName, connectionState: model.omiConnectionState) {
+                    pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
+                    // pairedDeviceKind is non-nil whenever the banner shows (name/kind are set
+                    // together); the fallback is compiler-required. (Same pattern as the old banner.)
+                    let deviceName = model.pairedDeviceKind?.displayName ?? "device"
                     FootnoteRow(
                         symbol: "antenna.radiowaves.left.and.right.slash", isWarning: true,
                         text: reason == .poweredOff
-                            ? "Bluetooth is off — your Omi can't connect. Recording uses the iPhone mic."
-                            : "Sotto needs Bluetooth permission to use your Omi. Recording uses the iPhone mic.",
+                            ? "Bluetooth is off — your \(deviceName) can't connect. Recording uses the iPhone mic."
+                            : "Sotto needs Bluetooth permission to use your \(deviceName). Recording uses the iPhone mic.",
                         actionLabel: "Open Settings", action: openSettings)
                 }
                 if pipeline.diskGuardActive {
@@ -585,7 +589,7 @@ Then add to `HeroCard`:
         }
         if micDenied { return true }
         if AppModel.bluetoothBannerReason(
-            pairedOmiName: model.pairedOmiName, connectionState: model.omiConnectionState) != nil {
+            pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) != nil {
             return true
         }
         return pipeline.diskGuardActive
