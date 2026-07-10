@@ -1,6 +1,5 @@
 import AVFAudio
 import SwiftUI
-import UIKit
 
 /// M9 unified home screen: one glance = current state; one tap = start/stop; scroll down for
 /// history (SPEC "UI specification" note, superseding the old Main + List screens).
@@ -109,24 +108,12 @@ private struct HomeScreen: View {
         return selectedKeys.count
     }
 
-    /// `model.settings` is UserDefaults-backed, not @Observable — a plain read in `banners`
-    /// would go stale when Settings changes the engine. @AppStorage observes the same
-    /// defaults key; nil (pre-M10 installs) falls back to the store's migrating getter.
-    @AppStorage("transcriptionEngine") private var engineRaw: String?
-    private var onDeviceEngineSelected: Bool {
-        let engine = engineRaw.flatMap(TranscriptionBackend.init(rawValue:))
-            ?? model.settings.transcriptionEngine
-        return engine == .speechAnalyzer
-    }
-
     var body: some View {
         List(selection: $selectedKeys) {
             // Header section — scrolls away with the list (user decision; the system orange
             // mic dot + Live Activity carry the always-visible recording indication).
             Section {
                 HeroCard(model: model, pipeline: pipeline, micDenied: micDenied)
-                    .selectionDisabled(true)
-                banners
                     .selectionDisabled(true)
             }
             .listRowSeparator(.hidden)
@@ -258,81 +245,6 @@ private struct HomeScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var banners: some View {
-        if let notice = model.recoveryNotice {
-            VStack(spacing: 4) {
-                NoticeBanner(text: notice, color: .orange)
-                Button("Dismiss") { model.dismissRecoveryNotice() }
-                    .font(.footnote)
-            }
-        }
-        if case .downloading(let fraction) = model.assetState {
-            VStack(spacing: 4) {
-                ProgressView(value: fraction)
-                Text("Preparing on-device transcription — recordings are saved and will be transcribed when it's ready.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal)
-        } else if case .notInstalled = model.assetState {
-            Button {
-                Task { await model.downloadSpeechModel() }
-            } label: {
-                Label("Download transcription model", systemImage: "arrow.down.circle")
-                    .font(.footnote)
-            }
-        } else if case .failed = model.assetState {
-            VStack(spacing: 4) {
-                NoticeBanner(text: "Model download failed — check your connection.", color: .red)
-                Button("Try again") { Task { await model.downloadSpeechModel() } }
-                    .font(.footnote)
-            }
-        } else if case .unsupported = model.assetState, onDeviceEngineSelected {
-            NoticeBanner(
-                text: "This device doesn't support on-device transcription. Select another transcription engine in Settings.",
-                color: .secondary)
-        }
-        if micDenied {
-            VStack(spacing: 6) {
-                NoticeBanner(
-                    text: "Microphone access is off. Sotto can't listen without it.",
-                    color: .red)
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                .font(.footnote.bold())
-            }
-        }
-        // M12 Task 12: same visual weight as micDenied above — full text + action button,
-        // stacked. Only for paired users (SPEC "UI & surfacing"); capture continues on the
-        // phone mic regardless, so this is informational, not blocking.
-        if let reason = AppModel.bluetoothBannerReason(
-            pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
-            // pairedDeviceKind is non-nil whenever the banner shows (the banner requires a
-            // paired name, and name/kind are set together); the fallback is compiler-required.
-            let deviceName = model.pairedDeviceKind?.displayName ?? "device"
-            VStack(spacing: 6) {
-                NoticeBanner(
-                    text: reason == .poweredOff
-                        ? "Bluetooth is off — your \(deviceName) can't connect. Recording uses the iPhone mic."
-                        : "Sotto needs Bluetooth permission to use your \(deviceName). Recording uses the iPhone mic.",
-                    color: .red)
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                .font(.footnote.bold())
-            }
-        }
-        if pipeline.diskGuardActive {
-            NoticeBanner(text: "Low disk space — new recordings are paused.", color: .red)
-        }
-    }
-
     private var emptyStateText: String {
         if pipeline.currentSegmentStartDate != nil {
             return "Recording your first conversation…"
@@ -371,18 +283,5 @@ private struct HomeScreen: View {
             }
             .tag("\(section.id)/\(entry.id)")
         }
-    }
-}
-
-private struct NoticeBanner: View {
-    let text: String
-    let color: Color
-
-    var body: some View {
-        Text(text)
-            .font(.footnote)
-            .foregroundStyle(color)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
     }
 }

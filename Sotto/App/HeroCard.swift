@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The home header's state machine (moved from ContentView's HomeScreen, made internal
 /// and purely derived so it is unit-testable). One segment-open case takes priority over
@@ -75,6 +76,17 @@ struct HeroCard: View {
     let pipeline: ListeningPipeline
     let micDenied: Bool
 
+    /// `model.settings` is UserDefaults-backed, not @Observable — @AppStorage observes the
+    /// same defaults key so the unsupported-engine footnote updates when Settings changes
+    /// the engine; nil (pre-M10 installs) falls back to the store's migrating getter.
+    /// (Moved from HomeScreen with the banner fold-in.)
+    @AppStorage("transcriptionEngine") private var engineRaw: String?
+    private var onDeviceEngineSelected: Bool {
+        let engine = engineRaw.flatMap(TranscriptionBackend.init(rawValue:))
+            ?? model.settings.transcriptionEngine
+        return engine == .speechAnalyzer
+    }
+
     private var state: HeaderState {
         HeaderState(
             segmentStart: pipeline.currentSegmentStartDate,
@@ -100,6 +112,7 @@ struct HeroCard: View {
                 actionButton
             }
             subtitleLine
+            footnotes
         }
         .padding(16)
         .glassEffect(.regular, in: .rect(cornerRadius: 26))
@@ -154,6 +167,91 @@ struct HeroCard: View {
         default: "Stop"
         }
     }
+
+    /// The former full-weight banner stack, folded into the card as footnote rows —
+    /// same copy, same actions, same trigger conditions (spec "Banners → footnotes").
+    @ViewBuilder private var footnotes: some View {
+        if hasFootnotes {
+            Divider()
+                .padding(.top, 12)
+            VStack(alignment: .leading, spacing: 8) {
+                if let notice = model.recoveryNotice {
+                    FootnoteRow(
+                        symbol: "exclamationmark.triangle", isWarning: true, text: notice,
+                        actionLabel: "Dismiss") { model.dismissRecoveryNotice() }
+                }
+                if case .downloading(let fraction) = model.assetState {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: fraction)
+                        Text("Preparing on-device transcription — recordings are saved and will be transcribed when it's ready.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if case .notInstalled = model.assetState {
+                    FootnoteRow(
+                        symbol: "arrow.down.circle",
+                        text: "On-device transcription model not downloaded.",
+                        actionLabel: "Download") { Task { await model.downloadSpeechModel() } }
+                } else if case .failed = model.assetState {
+                    FootnoteRow(
+                        symbol: "arrow.down.circle", isWarning: true,
+                        text: "Model download failed — check your connection.",
+                        actionLabel: "Try again") { Task { await model.downloadSpeechModel() } }
+                } else if case .unsupported = model.assetState, onDeviceEngineSelected {
+                    FootnoteRow(
+                        symbol: "exclamationmark.triangle",
+                        text: "This device doesn't support on-device transcription. Select another transcription engine in Settings.")
+                }
+                if micDenied {
+                    FootnoteRow(
+                        symbol: "mic.slash", isWarning: true,
+                        text: "Microphone access is off. Sotto can't listen without it.",
+                        actionLabel: "Open Settings", action: openSettings)
+                }
+                if let reason = AppModel.bluetoothBannerReason(
+                    pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
+                    // pairedDeviceKind is non-nil whenever the banner shows (name/kind are set
+                    // together); the fallback is compiler-required. (Same pattern as the old banner.)
+                    let deviceName = model.pairedDeviceKind?.displayName ?? "device"
+                    FootnoteRow(
+                        symbol: "antenna.radiowaves.left.and.right.slash", isWarning: true,
+                        text: reason == .poweredOff
+                            ? "Bluetooth is off — your \(deviceName) can't connect. Recording uses the iPhone mic."
+                            : "Sotto needs Bluetooth permission to use your \(deviceName). Recording uses the iPhone mic.",
+                        actionLabel: "Open Settings", action: openSettings)
+                }
+                if pipeline.diskGuardActive {
+                    FootnoteRow(
+                        symbol: "externaldrive.badge.exclamationmark", isWarning: true,
+                        text: "Low disk space — new recordings are paused.")
+                }
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    /// Mirrors every footnote condition above — gates the Divider so an all-clear card
+    /// has no trailing hairline.
+    private var hasFootnotes: Bool {
+        if model.recoveryNotice != nil { return true }
+        switch model.assetState {
+        case .downloading, .notInstalled, .failed: return true
+        case .unsupported: if onDeviceEngineSelected { return true }
+        default: break
+        }
+        if micDenied { return true }
+        if AppModel.bluetoothBannerReason(
+            pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) != nil {
+            return true
+        }
+        return pipeline.diskGuardActive
+    }
+
+    private func openSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+    }
 }
 
 /// Pulsing dot for the card's segment-open state (moved verbatim from ContentView.swift).
@@ -168,5 +266,34 @@ struct PulsingDot: View {
             .opacity(pulsing ? 0.35 : 1.0)
             .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
             .onAppear { pulsing = true }
+    }
+}
+
+/// One notice line inside the card: leading symbol, footnote text, optional trailing bold
+/// action. Warning rows tint the symbol red, not the body text (spec). Explicit button
+/// style is required — the row lives inside a List row that already contains other buttons.
+private struct FootnoteRow: View {
+    let symbol: String
+    var isWarning = false
+    let text: String
+    var actionLabel: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.footnote)
+                .foregroundStyle(isWarning ? Color.red : Color.secondary)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let actionLabel, let action {
+                Button(actionLabel, action: action)
+                    .font(.footnote.bold())
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color("Ink"))
+            }
+        }
     }
 }
