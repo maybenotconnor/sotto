@@ -160,9 +160,14 @@ struct ConversationDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            ShareLink(item: mdURL) { Image(systemName: "square.and.arrow.up") }
+        // Keep this to a SINGLE trailing item. With the inline, editable navigation title
+        // (transcript-present branch) the title claims the middle of the bar, so a two-item
+        // group (share + menu) no longer fit and iOS collapsed them into its own "•••"
+        // overflow button — which then opened to reveal *our* ellipsis menu, i.e. the
+        // "tap the three dots twice" bug. One item can't overflow, so Share moves inside.
+        ToolbarItem(placement: .topBarTrailing) {
             Menu {
+                ShareLink(item: mdURL) { Label("Share", systemImage: "square.and.arrow.up") }
                 Button("Copy text") {
                     UIPasteboard.general.string = transcript?.body ?? ""
                 }
