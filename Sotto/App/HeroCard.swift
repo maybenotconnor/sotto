@@ -157,6 +157,11 @@ struct HeroCard: View {
         }
         .buttonStyle(.glassProminent)
         .tint(Color("Ink"))
+        // .glassProminent keeps a light label on the tint in both modes, which turns
+        // white-on-porcelain (unreadable) at night — the label must invert WITH the
+        // capsule, so it uses the opposing asset color explicitly ("ink by day, paper
+        // by night" from the spec, applied to both layers of the button).
+        .foregroundStyle(Color("Porcelain"))
         .disabled(micDenied && (pipeline.status == .idle || pipeline.status == .interrupted))
     }
 
