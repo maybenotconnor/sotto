@@ -226,6 +226,29 @@ Unchanged by design — this refactor introduces no new failure modes. The
   `ToggleListeningIntent`) — neither touches renamed types, but verify the widget
   target still builds.
 
+## Planning amendments (2026-07-10)
+
+Copy/constant surfaces missed by the original scope, found during plan
+reconnaissance — all follow the kind-driven-copy decision:
+
+- **Notification copy** (`NotificationScheduling.swift`): "Omi disconnected" /
+  "The Omi disconnected…" / "Omi battery low" are user-visible strings naming the
+  device family. The three M12 methods gain a `deviceName: String` parameter
+  (`scheduleSourceFallbackNotification(deviceName:)`,
+  `scheduleCaptureUnavailableNotification(deviceName:)`, and
+  `scheduleOmiLowBatteryNotification(level:)` →
+  `scheduleLowBatteryNotification(deviceName:level:)`). `ListeningPipeline` passes
+  `source.sourceType.displayName`; AppModel passes the paired kind's displayName.
+  Notification identifier strings (e.g. `"sotto.omiLowBattery"`) are dedup keys,
+  not copy — unchanged.
+- **`OmiConstants.lowBatteryThresholdPercent`**: generic code (AppModel's battery
+  handler) reads a device-module constant. Moves to `WearableConstants` in
+  `WearableTypes.swift`.
+- **`AppModel.pairedDeviceKind: DeviceKind?`** (new, alongside `pairedDeviceName`):
+  the banner and notification copy need the family display name, which
+  `PairedDevice.name` (the advertised peripheral name, e.g. "Omi DevKit 2") does
+  not provide.
+
 ## Out of scope
 
 - Any new device support (Limitless Pendant or otherwise).
