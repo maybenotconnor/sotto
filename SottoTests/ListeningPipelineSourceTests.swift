@@ -101,7 +101,7 @@ struct ListeningPipelineSourceTests {
         // `.phoneMic` (previous test) — the recorder's segment tagging needs that — but the
         // Live Activity must never surface it as a label. Rendering "iPhone mic" on every
         // lock-screen update would be new, unwanted chatter for the vast majority of users
-        // who never paired an Omi (mirrors ContentView's `pairedOmiName != nil` gate on the
+        // who never paired an Omi (mirrors ContentView's `pairedDeviceName != nil` gate on the
         // home header).
         let plainMic = FakeAudioSource()
         let plainActivity = FakeLiveActivityController()

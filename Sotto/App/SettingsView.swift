@@ -70,7 +70,7 @@ struct SettingsView: View {
 
     private var listeningSection: some View {
         Section("Listening") {
-            if let name = model.pairedOmiName {
+            if let name = model.pairedDeviceName {
                 LabeledContent("Audio source", value: "\(name) + iPhone mic fallback")
             } else {
                 LabeledContent("Audio source", value: "iPhone microphone")
@@ -104,7 +104,7 @@ struct SettingsView: View {
 
     /// M12 Settings (Task 11): pairing status + pair/forget actions for an Omi wearable.
     /// This section's device/status/battery readout always reflects the pairing store
-    /// immediately (`AppModel.pairOmi`/`forgetOmi` set it right away) — but the pipeline's
+    /// immediately (`AppModel.pairDevice`/`forgetDevice` set it right away) — but the pipeline's
     /// ACTUAL audio source only recomposes right away if nothing is listening
     /// (`AppModel.rebuildPipelineIfIdle`); otherwise the swap is deferred until the current
     /// session ends (`AppModel.stopListening` → `rebuildIfSourceShapeChanged`, M12 final
@@ -112,18 +112,18 @@ struct SettingsView: View {
     /// Advanced listening settings above.
     private var omiSection: some View {
         Section("Omi Device") {
-            if let name = model.pairedOmiName {
+            if let name = model.pairedDeviceName {
                 LabeledContent("Device", value: name)
                 LabeledContent("Status", value: omiStatusLabel)
-                if let battery = model.omiBatteryLevel {
+                if let battery = model.deviceBatteryLevel {
                     LabeledContent("Battery", value: "\(battery)%")
                 }
-                if let failure = model.omiSetupFailure {
+                if let failure = model.deviceSetupFailure {
                     Text(failure).font(.caption).foregroundStyle(.red)
                 }
                 Button("Forget This Device", role: .destructive) { showForgetConfirm = true }
                     .confirmationDialog("Forget \(name)?", isPresented: $showForgetConfirm) {
-                        Button("Forget", role: .destructive) { Task { await model.forgetOmi() } }
+                        Button("Forget", role: .destructive) { Task { await model.forgetDevice() } }
                     } message: {
                         Text("Sotto will stop connecting to it and use the iPhone microphone.")
                     }
@@ -138,7 +138,7 @@ struct SettingsView: View {
     }
 
     private var omiStatusLabel: String {
-        switch model.omiConnectionState {
+        switch model.deviceConnectionState {
         case .streaming: "Streaming"
         case .connected: "Connected"
         case .connecting: "Connecting…"

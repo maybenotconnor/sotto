@@ -66,9 +66,9 @@ final class AppModel {
     /// so it's deliberately excluded here (Settings' `omiStatusLabel` still surfaces it as
     /// status text, just not as an actionable banner).
     nonisolated static func bluetoothBannerReason(
-        pairedOmiName: String?, connectionState: DeviceConnectionState?
+        pairedDeviceName: String?, connectionState: DeviceConnectionState?
     ) -> BluetoothUnavailableReason? {
-        guard pairedOmiName != nil, case .unavailable(let reason) = connectionState,
+        guard pairedDeviceName != nil, case .unavailable(let reason) = connectionState,
               reason == .poweredOff || reason == .unauthorized
         else { return nil }
         return reason
@@ -110,13 +110,14 @@ final class AppModel {
     /// here instead of the real Documents/Sotto directory, so history paging and the
     /// `DayIndexStore` operate purely on a synthetic directory tree.
     private let segmentRootOverride: URL?
-    /// Test seam mirroring `segmentRootOverride`: when set, Omi pairing reads/writes this
-    /// store instead of `UserDefaults.standard`.
-    private let omiStoreOverride: PairedDeviceStore?
-    /// Test seam mirroring `omiStoreOverride`: when set, `composePipeline` builds the paired
-    /// Omi's `OmiAudioSource` over this transport instead of a real `CoreBluetoothOmiTransport`
-    /// — lets tests drive connection/battery events (e.g. the Critical #1 re-subscribe-across-
-    /// sessions regression test) with no Bluetooth hardware involved.
+    /// Test seam mirroring `segmentRootOverride`: when set, device pairing reads/writes
+    /// this store instead of `UserDefaults.standard`.
+    private let deviceStoreOverride: PairedDeviceStore?
+    /// Test seam mirroring `deviceStoreOverride`: when set, the factory's `.omi` branch in
+    /// `composePipeline` builds `OmiAudioSource` over this transport instead of a real
+    /// `CoreBluetoothOmiTransport` — lets tests drive connection/battery events (e.g. the
+    /// Critical #1 re-subscribe-across-sessions regression test) with no Bluetooth hardware
+    /// involved. Kept Omi-named: it is typed `any OmiTransport`, genuinely Omi-specific.
     private let omiTransportOverride: (any OmiTransport)?
     /// M12: the long-lived recorder built once in `performSetUp` — reused (not
     /// reconstructed) by `rebuildPipelineIfIdle()` so a pair/forget mid-app-life doesn't pay
@@ -124,23 +125,28 @@ final class AppModel {
     /// `TranscriptionQueue`/`DayIndexStore` racing the originals over the same persisted
     /// files (see `composePipeline`).
     private var recorder: RecorderStateMachine?
-    /// M12 pairing (Settings, Task 11): the currently paired Omi's display name, or nil.
-    private(set) var pairedOmiName: String?
+    /// M12 pairing (Settings, Task 11): the currently paired wearable's advertised
+    /// peripheral name, or nil.
+    private(set) var pairedDeviceName: String?
+    /// The paired wearable's family — drives banner/notification copy (the family
+    /// display name isn't derivable from `pairedDeviceName`). Set and cleared together
+    /// with `pairedDeviceName` everywhere.
+    private(set) var pairedDeviceKind: DeviceKind?
     /// M12 final review Important #2: whether the CURRENTLY COMPOSED pipeline's source
-    /// includes the Omi failover branch — i.e. what `composePipeline` last built, as opposed
-    /// to `omiStoreOverride`'s (or the real store's) present pairing state, which a mid-session
+    /// includes the wearable failover branch — i.e. what `composePipeline` last built, as opposed
+    /// to `deviceStoreOverride`'s (or the real store's) present pairing state, which a mid-session
     /// pair/forget can move out ahead of. `rebuildIfSourceShapeChanged()` diffs the two to
     /// decide whether a deferred rebuild is owed once the session ends.
-    private(set) var composedWithOmi = false
-    private(set) var omiBatteryLevel: Int?
-    private(set) var omiConnectionState: DeviceConnectionState?
-    private(set) var omiSetupFailure: String?
+    private(set) var composedWithWearable = false
+    private(set) var deviceBatteryLevel: Int?
+    private(set) var deviceConnectionState: DeviceConnectionState?
+    private(set) var deviceSetupFailure: String?
     /// Two independent pumps (connection-state, battery) rather than one task juggling both
     /// via `async let` — capturing `self` into an `async let`'s child task trips Swift 6's
     /// region-based "sending self risks causing data races" check even though every mutation
     /// is safely hopped back to MainActor; two top-level `Task { [weak self] in }`s (the same
     /// shape used everywhere else in this file) don't have that problem.
-    private var omiObservationTasks: [Task<Void, Never>] = []
+    private var deviceObservationTasks: [Task<Void, Never>] = []
     /// Dedup for the low-battery notification: fires once per drop below threshold, then
     /// re-arms once the level recovers with margin — avoids re-notifying on every reading
     /// while hovering right at the line.
@@ -176,13 +182,13 @@ final class AppModel {
         assetInstaller: (any SpeechAssetInstalling)? = nil,
         networkMonitor: (any NetworkMonitoring)? = nil,
         segmentRootOverride: URL? = nil,
-        omiStoreOverride: PairedDeviceStore? = nil,
+        deviceStoreOverride: PairedDeviceStore? = nil,
         omiTransportOverride: (any OmiTransport)? = nil
     ) {
         self.installer = assetInstaller ?? SpeechAssetInstaller()
         self.networkMonitor = networkMonitor ?? WiFiMonitor()
         self.segmentRootOverride = segmentRootOverride
-        self.omiStoreOverride = omiStoreOverride
+        self.deviceStoreOverride = deviceStoreOverride
         self.omiTransportOverride = omiTransportOverride
         // Registered synchronously so a cold background launch (the intent runs the app
         // process without a scene) can already await a real toggle the moment perform() runs.
@@ -871,33 +877,43 @@ final class AppModel {
     /// else `performSetUp` does (salvage sweep, heartbeat/gap recording, retention sweep,
     /// launch drain) is launch-only and must run exactly once per process.
     private func composePipeline(recorder: RecorderStateMachine) {
-        for task in omiObservationTasks { task.cancel() }
-        omiObservationTasks = []
+        for task in deviceObservationTasks { task.cancel() }
+        deviceObservationTasks = []
         lowBatteryNotified = false
-        omiConnectionState = nil
-        omiBatteryLevel = nil
-        omiSetupFailure = nil
+        deviceConnectionState = nil
+        deviceBatteryLevel = nil
+        deviceSetupFailure = nil
 
-        // M12: auto-prefer a paired Omi (spec "Selection model") — failover to the phone
-        // mic is the selection logic itself; no paired device ⇒ exactly the old
+        // Auto-prefer a paired wearable (spec "Selection model") — failover to the
+        // phone mic is the selection logic itself; no paired device ⇒ exactly the old
         // construction path (byte-identical behavior for phone-mic-only users).
-        let omiStore = omiStoreOverride ?? PairedDeviceStore()
-        var omiSource: OmiAudioSource?
+        let deviceStore = deviceStoreOverride ?? PairedDeviceStore()
+        var wearableSource: (any WearableAudioSource)?
         var plainPhoneMic: PhoneMicAudioSource?
         let source: any AudioSource
-        if let paired = omiStore.device {
-            let omi = OmiAudioSource(
-                transport: omiTransportOverride ?? CoreBluetoothOmiTransport(), deviceID: paired.id)
-            omiSource = omi
-            source = FailoverAudioSource(wearable: omi, phoneMic: PhoneMicAudioSource())
-            pairedOmiName = paired.name
-            composedWithOmi = true
+        if let paired = deviceStore.device {
+            // THE extension point: one WearableAudioSource implementation per device
+            // family. A new device kind adds a case here and its own module — nothing
+            // downstream of this switch changes.
+            let wearable: any WearableAudioSource
+            switch paired.kind {
+            case .omi:
+                wearable = OmiAudioSource(
+                    transport: omiTransportOverride ?? CoreBluetoothOmiTransport(),
+                    deviceID: paired.id)
+            }
+            wearableSource = wearable
+            source = FailoverAudioSource(wearable: wearable, phoneMic: PhoneMicAudioSource())
+            pairedDeviceName = paired.name
+            pairedDeviceKind = paired.kind
+            composedWithWearable = true
         } else {
             let phoneMic = PhoneMicAudioSource()
             plainPhoneMic = phoneMic
             source = phoneMic
-            pairedOmiName = nil
-            composedWithOmi = false
+            pairedDeviceName = nil
+            pairedDeviceKind = nil
+            composedWithWearable = false
         }
 
         let newPipeline = ListeningPipeline(
@@ -966,16 +982,16 @@ final class AppModel {
         // fire again. Each loop iteration re-subscribes once the previous stream ends, so the
         // NEXT session picks status back up; the short sleep only guards against a hot spin
         // while genuinely idle between sessions.
-        if let omiSource {
+        if let wearableSource {
             let stateTask = Task { [weak self] in
                 while !Task.isCancelled, self != nil {
-                    for await state in await omiSource.connectionStates() {
+                    for await state in await wearableSource.connectionStates() {
                         // setupFailureMessage becomes readable once the codec characteristic
                         // has been processed — refresh it alongside each state change.
-                        let failure = await omiSource.setupFailureMessage
+                        let failure = await wearableSource.setupFailureMessage
                         await MainActor.run {
-                            self?.omiConnectionState = state
-                            self?.omiSetupFailure = failure
+                            self?.deviceConnectionState = state
+                            self?.deviceSetupFailure = failure
                         }
                     }
                     try? await Task.sleep(for: .milliseconds(100))
@@ -983,13 +999,13 @@ final class AppModel {
             }
             let batteryTask = Task { [weak self] in
                 while !Task.isCancelled, self != nil {
-                    for await level in await omiSource.batteryLevels() {
-                        await MainActor.run { self?.applyOmiBattery(level) }
+                    for await level in await wearableSource.batteryLevels() {
+                        await MainActor.run { self?.applyDeviceBattery(level) }
                     }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }
-            omiObservationTasks = [stateTask, batteryTask]
+            deviceObservationTasks = [stateTask, batteryTask]
         }
     }
 
@@ -998,8 +1014,8 @@ final class AppModel {
     /// with a 10-point margin (avoids re-notifying on every reading while hovering at the
     /// line). AppModel holds no scheduler reference of its own (mirrors `performSetUp`,
     /// which also constructs `UserNotificationScheduler()` inline) — constructed fresh here.
-    private func applyOmiBattery(_ level: Int) {
-        omiBatteryLevel = level
+    private func applyDeviceBattery(_ level: Int) {
+        deviceBatteryLevel = level
         if level <= WearableConstants.lowBatteryThresholdPercent, !lowBatteryNotified {
             lowBatteryNotified = true
             Task { await UserNotificationScheduler().scheduleOmiLowBatteryNotification(level: level) }
@@ -1007,13 +1023,15 @@ final class AppModel {
         if level > WearableConstants.lowBatteryThresholdPercent + 10 { lowBatteryNotified = false }
     }
 
-    /// Settings "Pair Omi Device…" (Task 11): the pair sheet owns its own scan transport
-    /// lifecycle, this just hands out a fresh one.
-    func makeOmiScanTransport() -> any OmiTransport {
-        CoreBluetoothOmiTransport()
+    /// Settings pairing (Task 11): the pair sheet owns its own scan transport
+    /// lifecycle, this just hands out a fresh one for the requested device family.
+    func makeScanTransport(for kind: DeviceKind) -> any DeviceScanning {
+        switch kind {
+        case .omi: CoreBluetoothOmiTransport()
+        }
     }
 
-    /// Settings pairing flow: persists the pairing, updates `pairedOmiName` immediately (M12
+    /// Settings pairing flow: persists the pairing, updates `pairedDeviceName` immediately (M12
     /// final review Important #2 — Settings must reflect the new pairing right away even
     /// mid-session; before this fix it only updated inside `composePipeline`, so pairing while
     /// listening left Settings showing the "unpaired" UI as if pairing had silently failed),
@@ -1021,22 +1039,24 @@ final class AppModel {
     /// listening, the new source composes once the session actually ends —
     /// `rebuildIfSourceShapeChanged()`, called from every place that can bring the pipeline
     /// back to idle — not on the next relaunch.
-    func pairOmi(_ discovery: WearableDiscovery) async {
-        (omiStoreOverride ?? PairedDeviceStore()).pair(
+    func pairDevice(_ discovery: WearableDiscovery) async {
+        (deviceStoreOverride ?? PairedDeviceStore()).pair(
             PairedDevice(id: discovery.id, name: discovery.name, kind: discovery.kind))
-        pairedOmiName = discovery.name
+        pairedDeviceName = discovery.name
+        pairedDeviceKind = discovery.kind
         await rebuildPipelineIfIdle()
     }
 
     /// Settings "Forget This Device" (Task 11). Name/battery/connection are cleared
     /// immediately regardless of whether a rebuild can happen right away — Settings must stop
     /// showing a device we've just told the user we'd stop tracking, even if the actual source
-    /// swap has to wait for the current session to end (see `pairOmi` above for the same fix).
-    func forgetOmi() async {
-        (omiStoreOverride ?? PairedDeviceStore()).forget()
-        pairedOmiName = nil
-        omiBatteryLevel = nil
-        omiConnectionState = nil
+    /// swap has to wait for the current session to end (see `pairDevice` above for the same fix).
+    func forgetDevice() async {
+        (deviceStoreOverride ?? PairedDeviceStore()).forget()
+        pairedDeviceName = nil
+        pairedDeviceKind = nil
+        deviceBatteryLevel = nil
+        deviceConnectionState = nil
         await rebuildPipelineIfIdle()
     }
 
@@ -1069,13 +1089,13 @@ final class AppModel {
 
     /// Idle- and shape-gated: a no-op unless the pipeline is genuinely idle AND what's paired
     /// right now differs from what the CURRENT pipeline was actually composed with
-    /// (`composedWithOmi`) — i.e. a pair/forget occurred while a session was in flight and
+    /// (`composedWithWearable`) — i.e. a pair/forget occurred while a session was in flight and
     /// hasn't been picked up yet. Deliberately simple: piggybacks on the existing
     /// `rebuildPipelineIfIdle`/`composePipeline` path rather than adding a second one.
     private func rebuildIfSourceShapeChanged() async {
         guard pipeline?.status == .idle else { return }
-        let pairedNow = (omiStoreOverride ?? PairedDeviceStore()).device != nil
-        guard pairedNow != composedWithOmi else { return }
+        let pairedNow = (deviceStoreOverride ?? PairedDeviceStore()).device != nil
+        guard pairedNow != composedWithWearable else { return }
         await rebuildPipelineIfIdle()
     }
 }

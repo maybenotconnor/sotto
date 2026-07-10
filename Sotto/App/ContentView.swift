@@ -275,7 +275,7 @@ private struct HomeScreen: View {
             VStack(alignment: .leading, spacing: 1) {
                 // M12 Task 12: source suffix only when an Omi is paired — phone-mic-only
                 // users see the exact same label as before (SPEC "UI & surfacing").
-                if let source = pipeline.activeSourceType, model.pairedOmiName != nil {
+                if let source = pipeline.activeSourceType, model.pairedDeviceName != nil {
                     Text("\(headerState.label) · \(source.displayName)").font(.headline)
                 } else {
                     Text(headerState.label).font(.headline)
@@ -358,7 +358,7 @@ private struct HomeScreen: View {
         // stacked. Only for paired users (SPEC "UI & surfacing"); capture continues on the
         // phone mic regardless, so this is informational, not blocking.
         if let reason = AppModel.bluetoothBannerReason(
-            pairedOmiName: model.pairedOmiName, connectionState: model.omiConnectionState) {
+            pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
             VStack(spacing: 6) {
                 NoticeBanner(
                     text: reason == .poweredOff

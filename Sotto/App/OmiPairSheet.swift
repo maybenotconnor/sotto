@@ -26,7 +26,7 @@ struct OmiPairSheet: View {
                 ForEach(discoveries) { discovery in
                     Button {
                         Task {
-                            await model.pairOmi(discovery)
+                            await model.pairDevice(discovery)
                             dismiss()
                         }
                     } label: {
@@ -38,7 +38,7 @@ struct OmiPairSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
         }
         .task {
-            let transport = model.makeOmiScanTransport()
+            let transport = model.makeScanTransport(for: .omi)
             await withTaskCancellationHandler {
                 for await discovery in await transport.scan() {
                     // Dedup: CoreBluetooth's didDiscover fires repeatedly for the same

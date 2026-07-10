@@ -390,7 +390,7 @@ final class ListeningPipeline {
     /// pipeline too (the recorder's segment tagging needs the accurate value — see that
     /// property's doc comment), but surfacing "iPhone mic" on every lock-screen update would
     /// be new, unwanted chatter for the vast majority of users who never paired an Omi. This
-    /// pipeline has no direct handle on `AppModel.pairedOmiName` (mirrors the home header's
+    /// pipeline has no direct handle on `AppModel.pairedDeviceName` (mirrors the home header's
     /// gate — ContentView), but "source can switch" is an equivalent proxy here: only
     /// `FailoverAudioSource` conforms to `SourceSwitchingAudioSource`, and `AppModel` only
     /// constructs one when an Omi is actually paired.
