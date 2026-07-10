@@ -35,7 +35,6 @@ struct ContentView: View {
                             ProgressView("Preparing…")
                         }
                     }
-                    .navigationTitle("Sotto")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             NavigationLink {
@@ -64,12 +63,11 @@ struct ContentView: View {
     }
 }
 
-/// M9 unified home: a single morphing status header — one status card that also carries the
-/// "Recording…" state and segment timer while a segment is open, so there is never a second
-/// header-like row below it (user-reported: a separate live row duplicated the header) —
-/// plus full-weight banners (scrolling away with the list — the always-visible recording
-/// indication is carried by the system orange mic dot and the Live Activity, not by this
-/// header), then infinite-scroll history with sticky day headers, newest first.
+/// M9 unified home, reskinned 2026-07-10 (home-header-refresh spec): a single Porcelain
+/// HeroCard carries state + timer + action (and, after the banner fold-in, all notices),
+/// then infinite-scroll history with sticky day headers, newest first. The card scrolls
+/// away with the list — the system orange mic dot and the Live Activity carry the
+/// always-visible recording indication.
 private struct HomeScreen: View {
     let model: AppModel
     let pipeline: ListeningPipeline
@@ -126,12 +124,9 @@ private struct HomeScreen: View {
             // Header section — scrolls away with the list (user decision; the system orange
             // mic dot + Live Activity carry the always-visible recording indication).
             Section {
-                statusCard
+                HeroCard(model: model, pipeline: pipeline, micDenied: micDenied)
                     .selectionDisabled(true)
-                banners   // moved from the old MainScreen at FULL weight: same copy, same
-                          // action buttons (Download model / Try again / Open Settings /
-                          // Dismiss), stacked when several apply (user decision: don't
-                          // over-compress).
+                banners
                     .selectionDisabled(true)
             }
             .listRowSeparator(.hidden)
@@ -263,49 +258,6 @@ private struct HomeScreen: View {
         }
     }
 
-    private var statusCard: some View {
-        HStack(spacing: 12) {
-            if case .segmentOpen = headerState {
-                // Reuses the old LiveRecordingRow's pulse treatment — now it lives on the
-                // header itself instead of on a second, separate row underneath it.
-                PulsingDot(color: .red)
-            } else {
-                Circle().fill(headerState.dotColor).frame(width: 12, height: 12)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                // M12 Task 12: source suffix only when a wearable is paired — phone-mic-only
-                // users see the exact same label as before (SPEC "UI & surfacing").
-                if let source = pipeline.activeSourceType, model.pairedDeviceName != nil {
-                    Text("\(headerState.label) · \(source.displayName)").font(.headline)
-                } else {
-                    Text(headerState.label).font(.headline)
-                }
-                if let timerStart = headerState.timerStart {
-                    Text(timerStart, style: .timer)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            Button(buttonLabel) {
-                Task {
-                    switch pipeline.status {
-                    case .idle: await pipeline.start()
-                    case .interrupted: await pipeline.resumeFromInterruption()
-                    // Routed through AppModel (not a direct pipeline.stop()) so a pair/forget
-                    // that happened mid-session gets its deferred rebuild the moment this
-                    // session actually ends (M12 final review Important #2).
-                    default: await model.stopListening()
-                    }
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(pipeline.status == .idle ? .accentColor : .red)
-            .disabled(micDenied && (pipeline.status == .idle || pipeline.status == .interrupted))
-        }
-        .padding(.vertical, 4)
-    }
-
     @ViewBuilder
     private var banners: some View {
         if let notice = model.recoveryNotice {
@@ -381,67 +333,6 @@ private struct HomeScreen: View {
         }
     }
 
-    private var buttonLabel: String {
-        switch pipeline.status {
-        case .idle: "Start Listening"
-        case .interrupted: "Resume"
-        default: "Stop"
-        }
-    }
-
-    /// The single header's state machine: one segment-open case takes priority over the raw
-    /// pipeline status so the header morphs into the old live row's "Recording…" + segment
-    /// timer instead of showing both a status card AND a separate live row (user-reported:
-    /// "you build a second header").
-    private enum HeaderState {
-        case idle
-        case starting
-        case interrupted(ListeningPipeline.HaltReason?)
-        case listening(sessionStart: Date?)
-        case segmentOpen(start: Date)
-
-        var label: String {
-            switch self {
-            case .idle: "Idle"
-            case .starting: "Starting…"
-            case .interrupted(let reason): reason == .userPause ? "Paused by you" : "Paused — call"
-            case .listening: "Listening"
-            case .segmentOpen: "Recording…"
-            }
-        }
-
-        var dotColor: Color {
-            switch self {
-            case .idle, .starting: .secondary
-            case .interrupted: .orange
-            case .listening: .green
-            case .segmentOpen: .red
-            }
-        }
-
-        /// One timer at a time: the segment timer while a segment is open, else the session
-        /// timer while listening/silence, else none.
-        var timerStart: Date? {
-            switch self {
-            case .segmentOpen(let start): start
-            case .listening(let sessionStart): sessionStart
-            case .idle, .starting, .interrupted: nil
-            }
-        }
-    }
-
-    private var headerState: HeaderState {
-        if let started = pipeline.currentSegmentStartDate {
-            return .segmentOpen(start: started)
-        }
-        switch pipeline.status {
-        case .idle: return .idle
-        case .starting: return .starting
-        case .interrupted: return .interrupted(pipeline.haltReason)
-        case .listening, .recording, .silence: return .listening(sessionStart: pipeline.sessionStartedAt)
-        }
-    }
-
     private var emptyStateText: String {
         if pipeline.currentSegmentStartDate != nil {
             return "Recording your first conversation…"
@@ -480,22 +371,6 @@ private struct HomeScreen: View {
             }
             .tag("\(section.id)/\(entry.id)")
         }
-    }
-}
-
-/// Pulsing dot for the header's segment-open state — the same pulse treatment the old
-/// standalone `LiveRecordingRow` used, now folded into the single status header.
-private struct PulsingDot: View {
-    let color: Color
-    @State private var pulsing = false
-
-    var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 12, height: 12)
-            .opacity(pulsing ? 0.35 : 1.0)
-            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
-            .onAppear { pulsing = true }
     }
 }
 
