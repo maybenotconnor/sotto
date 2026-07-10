@@ -47,6 +47,26 @@ struct CoordinatedMirrorTests {
         #expect(CoordinatedMirror.copy(missing, day: "2026-07-05", into: dest) == false)
     }
 
+    /// Regression: the M11 folder-sync data loss. The system file picker defaulted to the
+    /// app's OWN store, so the mirror destination overlapped the source — `copyReplacing`'s
+    /// remove-then-copy then deleted each transcript in place (removeItem(target) where
+    /// target == source, then a failing copy). Mirroring a file into a destination that
+    /// resolves to its own directory must leave the file completely intact.
+    @Test func copyIntoOwnDirectoryNeverDeletesTheSource() throws {
+        let root = tempDir()
+        let day = "2026-07-05"
+        let source = root.appendingPathComponent("\(day)/09-15-00.md")
+        writeFile("irreplaceable transcript", at: source)
+
+        // Destination == the source's own store root ⇒ dayDir == the source's directory
+        // ⇒ target resolves to `source` itself.
+        let ok = CoordinatedMirror.copy(source, day: day, into: root)
+
+        #expect(ok == false)   // nothing to mirror when source and target are the same file
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        #expect(try String(contentsOf: source, encoding: .utf8) == "irreplaceable transcript")
+    }
+
     @Test func removeDeletesNamedFilesAndToleratesAbsence() {
         let src = tempDir(), dest = tempDir()
         let source = src.appendingPathComponent("09-15-00.md")

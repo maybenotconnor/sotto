@@ -38,6 +38,15 @@ enum CoordinatedMirror {
     private static func copyReplacing(from source: URL, into directory: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: source.path) else { return false }
         let target = directory.appendingPathComponent(source.lastPathComponent)
+        // Self-overlap guard (data-loss prevention). If the destination resolves to the
+        // source's own location — a backup root pointed at the canonical store, which is
+        // exactly how the removed M11 folder-picker sync wiped every transcript — then
+        // `removeItem(target)` below would delete `source` itself and the copy would fail,
+        // leaving nothing. There is nothing to mirror in that case. Compare fully resolved
+        // paths (symlinks + standardization) so `/var`↔`/private/var` and bookmark-resolved
+        // provider URLs can't slip a same-file pair past a shallow string compare.
+        guard source.resolvingSymlinksInPath().standardizedFileURL
+            != target.resolvingSymlinksInPath().standardizedFileURL else { return false }
         do {
             if FileManager.default.fileExists(atPath: target.path) {
                 try FileManager.default.removeItem(at: target)
