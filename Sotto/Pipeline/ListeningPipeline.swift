@@ -58,7 +58,7 @@ final class ListeningPipeline {
     private var pendingPark: HaltReason?
     /// Dedup for the loud "nothing capturing" notification. `activeSourceType == nil` is
     /// overloaded (both "never activated" and "already notified"), so a nil-check alone would
-    /// silently drop the very FIRST `.captureUnavailable` event on a cold start (Omi loses the
+    /// silently drop the very FIRST `.captureUnavailable` event on a cold start (the wearable loses the
     /// startup race AND phoneMic.start() throws immediately) — the one signal that nothing is
     /// recording. Cleared on every successful activation and on a full stop().
     private var hasNotifiedCaptureUnavailable = false
@@ -96,7 +96,7 @@ final class ListeningPipeline {
         // Subscribe to source changes BEFORE source.start(): sourceChanges() registers its
         // continuation on first demand inside this task, and a change emitted before that
         // registration goes to zero continuations and is LOST — including the very first
-        // activation when the source resolves fast (Omi already streaming at startup), which
+        // activation when the source resolves fast (wearable already streaming at startup), which
         // would leave activeSourceType nil and the recorder's source label stale for the
         // whole session. Creating the task here enqueues it ahead of start()'s resume on the
         // MainActor, so the subscription lands before any event the started source can emit.
@@ -331,7 +331,7 @@ final class ListeningPipeline {
 
     /// M12: reacts to a `SourceSwitchingAudioSource`'s `sourceChanges()` stream. Rare race
     /// (FailoverAudioSource RACE B recovery) can redeliver the SAME source with the SAME
-    /// reason back-to-back (e.g. two `.phoneMic`/`.omiDisconnected` events with no
+    /// reason back-to-back (e.g. two `.phoneMic`/`.wearableDisconnected` events with no
     /// intervening recovery) — `recorder.rollover(to:)` is still called every time (a no-op
     /// finalize-wise when nothing is open), but the log line and user-facing notification are
     /// gated on the source actually having changed, so a repeat never double-notifies.
@@ -345,31 +345,35 @@ final class ListeningPipeline {
                 await recorder.setActiveSource(source)
                 log("Capturing via \(source.displayName)")
             }
-        case .omiDisconnected:
+        case .wearableDisconnected:
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
             hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
-                log("Omi disconnected — continuing on iPhone mic")
-                await notifications?.scheduleSourceFallbackNotification()
+                // `self.source.sourceType` is the preferred wearable's type on a switching
+                // source — the family name for copy; `source` here is the NEW active source.
+                log("\(self.source.sourceType.displayName) disconnected — continuing on \(source.displayName)")
+                await notifications?.scheduleSourceFallbackNotification(
+                    deviceName: self.source.sourceType.displayName)
             }
-        case .omiRecovered:
+        case .wearableRecovered:
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
             hasNotifiedCaptureUnavailable = false
             apply(snapshot)
             if previousSource != source {
-                log("Omi reconnected")
+                log("\(self.source.sourceType.displayName) reconnected")
             }
         case .captureUnavailable:
             activeSourceType = nil
             if !hasNotifiedCaptureUnavailable {
                 hasNotifiedCaptureUnavailable = true
-                log("Nothing capturing — Omi gone and mic unavailable")
-                await notifications?.scheduleCaptureUnavailableNotification()
+                log("Nothing capturing — \(source.sourceType.displayName) gone and mic unavailable")
+                await notifications?.scheduleCaptureUnavailableNotification(
+                    deviceName: source.sourceType.displayName)
             }
         }
         pushLiveActivitySource()
@@ -386,14 +390,14 @@ final class ListeningPipeline {
     }
 
     /// M12 Task 12: the Live Activity only gets a source label when the source can actually
-    /// switch (i.e. an Omi is paired). `activeSourceType` is stamped for a plain phone-mic
+    /// switch (i.e. a wearable is paired). `activeSourceType` is stamped for a plain phone-mic
     /// pipeline too (the recorder's segment tagging needs the accurate value — see that
     /// property's doc comment), but surfacing "iPhone mic" on every lock-screen update would
-    /// be new, unwanted chatter for the vast majority of users who never paired an Omi. This
-    /// pipeline has no direct handle on `AppModel.pairedOmiName` (mirrors the home header's
-    /// gate — ContentView), but "source can switch" is an equivalent proxy here: only
+    /// be new, unwanted chatter for the vast majority of users who never paired a wearable.
+    /// This pipeline has no direct handle on `AppModel.pairedDeviceName` (mirrors the home
+    /// header's gate — ContentView), but "source can switch" is an equivalent proxy here: only
     /// `FailoverAudioSource` conforms to `SourceSwitchingAudioSource`, and `AppModel` only
-    /// constructs one when an Omi is actually paired.
+    /// constructs one when a wearable is actually paired.
     private var liveActivitySourceLabel: String? {
         (source is any SourceSwitchingAudioSource) ? activeSourceType?.displayName : nil
     }

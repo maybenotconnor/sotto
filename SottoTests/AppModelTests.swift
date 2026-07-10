@@ -183,25 +183,25 @@ struct AppModelTests {
     @Test func bluetoothBannerReasonOnlyForPairedActionableUnavailability() {
         // Unpaired: never shown, regardless of connection state.
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: nil, connectionState: .unavailable(.poweredOff)) == nil)
+            pairedDeviceName: nil, connectionState: .unavailable(.poweredOff)) == nil)
 
         // Paired but connected/streaming/disconnected/nil: nothing actionable to surface.
-        #expect(AppModel.bluetoothBannerReason(pairedOmiName: "Omi", connectionState: nil) == nil)
+        #expect(AppModel.bluetoothBannerReason(pairedDeviceName: "Omi", connectionState: nil) == nil)
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: "Omi", connectionState: .connected) == nil)
+            pairedDeviceName: "Omi", connectionState: .connected) == nil)
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: "Omi", connectionState: .disconnected) == nil)
+            pairedDeviceName: "Omi", connectionState: .disconnected) == nil)
 
         // Paired + unsupported: excluded — no Settings toggle can fix it, so it isn't an
         // actionable banner (Settings' status text still surfaces it separately).
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: "Omi", connectionState: .unavailable(.unsupported)) == nil)
+            pairedDeviceName: "Omi", connectionState: .unavailable(.unsupported)) == nil)
 
         // Paired + poweredOff/unauthorized: the two actionable reasons the banner covers.
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: "Omi", connectionState: .unavailable(.poweredOff)) == .poweredOff)
+            pairedDeviceName: "Omi", connectionState: .unavailable(.poweredOff)) == .poweredOff)
         #expect(AppModel.bluetoothBannerReason(
-            pairedOmiName: "Omi", connectionState: .unavailable(.unauthorized)) == .unauthorized)
+            pairedDeviceName: "Omi", connectionState: .unavailable(.unauthorized)) == .unauthorized)
     }
 
     @Test func mergeSegmentsCombinesFilesIndexAndHistory() async throws {
@@ -354,36 +354,36 @@ struct AppModelTests {
         let suite = UserDefaults(suiteName: "omi-model-tests-\(suiteSuffix)-\(UUID().uuidString)")!
         return AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
-            omiStoreOverride: OmiDeviceStore(defaults: suite),
+            deviceStoreOverride: PairedDeviceStore(defaults: suite),
             omiTransportOverride: omiTransportOverride)
     }
 
     /// Task 10: pairing after setup has already completed rebuilds the pipeline in place
     /// (the pipeline is idle — never started) and surfaces the paired name immediately,
     /// without disturbing the already-idle pipeline's status.
-    @Test func pairOmiAfterSetupRebuildsAndSurfacesPairedName() async throws {
+    @Test func pairDeviceAfterSetupRebuildsAndSurfacesPairedName() async throws {
         let model = omiModel(suiteSuffix: "pair-after-setup")
         await model.ensureSetUp()
         #expect(model.pipeline?.status == .idle)
-        #expect(model.pairedOmiName == nil)
+        #expect(model.pairedDeviceName == nil)
 
-        let discovery = OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50)
-        await model.pairOmi(discovery)
+        let discovery = WearableDiscovery(id: UUID(), name: "Test Omi", rssi: -50, kind: .omi)
+        await model.pairDevice(discovery)
 
-        #expect(model.pairedOmiName == "Test Omi")
+        #expect(model.pairedDeviceName == "Test Omi")
         #expect(model.pipeline?.status == .idle)   // rebuild kept it idle, didn't start it
     }
 
     /// Task 10: pairing BEFORE `ensureSetUp()` has ever run has no `recorder` to reuse yet —
     /// `rebuildPipelineIfIdle` must fall back to a full first-time `ensureSetUp()` rather
     /// than silently no-op, so the very first pairing (e.g. onboarding) still takes effect.
-    @Test func pairOmiBeforeSetupBootstrapsFullSetup() async throws {
+    @Test func pairDeviceBeforeSetupBootstrapsFullSetup() async throws {
         let model = omiModel(suiteSuffix: "pair-before-setup")
-        let discovery = OmiDiscovery(id: UUID(), name: "Early Omi", rssi: -40)
+        let discovery = WearableDiscovery(id: UUID(), name: "Early Omi", rssi: -40, kind: .omi)
 
-        await model.pairOmi(discovery)
+        await model.pairDevice(discovery)
 
-        #expect(model.pairedOmiName == "Early Omi")
+        #expect(model.pairedDeviceName == "Early Omi")
         #expect(model.pipeline != nil)
         #expect(model.pipeline?.status == .idle)
     }
@@ -391,34 +391,34 @@ struct AppModelTests {
     /// Task 10: forgetting clears the paired name (via rebuild) and the battery/connection
     /// readings immediately, even though the rebuild that actually swaps the source is the
     /// same idle-gated path pairing uses.
-    @Test func forgetOmiClearsPairedNameAndReadings() async throws {
+    @Test func forgetDeviceClearsPairedNameAndReadings() async throws {
         let model = omiModel(suiteSuffix: "forget")
         await model.ensureSetUp()
-        await model.pairOmi(OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50))
-        #expect(model.pairedOmiName == "Test Omi")
+        await model.pairDevice(WearableDiscovery(id: UUID(), name: "Test Omi", rssi: -50, kind: .omi))
+        #expect(model.pairedDeviceName == "Test Omi")
 
-        await model.forgetOmi()
+        await model.forgetDevice()
 
-        #expect(model.pairedOmiName == nil)
-        #expect(model.omiBatteryLevel == nil)
-        #expect(model.omiConnectionState == nil)
+        #expect(model.pairedDeviceName == nil)
+        #expect(model.deviceBatteryLevel == nil)
+        #expect(model.deviceConnectionState == nil)
     }
 
     /// Task 10: no paired device ⇒ the plain phone-mic-only construction path — pairing is
-    /// never exercised, so `pairedOmiName` stays nil and the pipeline is exactly the old
+    /// never exercised, so `pairedDeviceName` stays nil and the pipeline is exactly the old
     /// single-source shape.
     @Test func noPairedDeviceKeepsPlainPhoneMicPath() async throws {
         let model = omiModel(suiteSuffix: "no-pairing")
         await model.ensureSetUp()
 
-        #expect(model.pairedOmiName == nil)
-        #expect(model.omiConnectionState == nil)
-        #expect(model.omiBatteryLevel == nil)
+        #expect(model.pairedDeviceName == nil)
+        #expect(model.deviceConnectionState == nil)
+        #expect(model.deviceBatteryLevel == nil)
         #expect(model.pipeline?.status == .idle)
     }
 
     /// Repeatedly emits `event` (harmless to redeliver — `OmiAudioSource.handle` is idempotent
-    /// for `.connecting`/`.connected`) until `model.omiConnectionState == expected` or the
+    /// for `.connecting`/`.connected`) until `model.deviceConnectionState == expected` or the
     /// timeout elapses. A single emit isn't reliable here: AppModel's observation loop
     /// (re-)subscribes from a detached `Task` inside `composePipeline`, not from a call the
     /// test directly awaits, so there's no guarantee the (re-)subscription has landed before
@@ -426,16 +426,16 @@ struct AppModelTests {
     /// `omi.connectionStates()` synchronously before returning.
     @discardableResult
     private func pollUntilConnectionState(
-        _ expected: OmiConnectionState, transport: FakeOmiTransport, event: OmiTransportEvent,
+        _ expected: DeviceConnectionState, transport: FakeOmiTransport, event: OmiTransportEvent,
         model: AppModel, timeout: Duration = .seconds(1)
     ) async -> Bool {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
             await transport.emit(event)
             try? await Task.sleep(for: .milliseconds(20))
-            if model.omiConnectionState == expected { return true }
+            if model.deviceConnectionState == expected { return true }
         }
-        return model.omiConnectionState == expected
+        return model.deviceConnectionState == expected
     }
 
     /// M12 final review Critical #1 regression: `OmiAudioSource.stop()` (called on every
@@ -447,8 +447,8 @@ struct AppModelTests {
     ///
     /// Drives a real start→stop→start cycle through the actual composed pipeline (a real
     /// `FailoverAudioSource` over a real `OmiAudioSource`, fed by a `FakeOmiTransport` — no
-    /// Bluetooth hardware) and asserts `omiConnectionState` updates again in the SECOND session.
-    /// Paired BEFORE `ensureSetUp()` (rather than via a mid-test `pairOmi()`) so the pipeline is
+    /// Bluetooth hardware) and asserts `deviceConnectionState` updates again in the SECOND session.
+    /// Paired BEFORE `ensureSetUp()` (rather than via a mid-test `pairDevice()`) so the pipeline is
     /// composed with the Omi failover branch from the start: `FailoverAudioSource.start()` only
     /// engages its real `PhoneMicAudioSource` fallback if the Omi hasn't streamed by the default
     /// 3 s startup race, or on a later disconnect — neither happens here, so both start/stop
@@ -460,21 +460,21 @@ struct AppModelTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: "omi-model-tests-resubscribe-\(UUID().uuidString)")!
-        let store = OmiDeviceStore(defaults: suite)
-        store.pair(PairedOmiDevice(id: UUID(), name: "Resub Omi"))
+        let store = PairedDeviceStore(defaults: suite)
+        store.pair(PairedDevice(id: UUID(), name: "Resub Omi", kind: .omi))
         let transport = FakeOmiTransport()
         let model = AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
-            omiStoreOverride: store, omiTransportOverride: transport)
+            deviceStoreOverride: store, omiTransportOverride: transport)
         await model.ensureSetUp()
-        #expect(model.pairedOmiName == "Resub Omi")
+        #expect(model.pairedDeviceName == "Resub Omi")
         #expect(model.pipeline?.status == .idle)
 
         // First session.
         await model.pipeline?.start()
         let sawFirst = await pollUntilConnectionState(
             .connecting, transport: transport, event: .connecting, model: model)
-        #expect(sawFirst, "setup: omiConnectionState never reflected the first session's .connecting")
+        #expect(sawFirst, "setup: deviceConnectionState never reflected the first session's .connecting")
 
         await model.pipeline?.stop()
         #expect(model.pipeline?.status == .idle)
@@ -485,7 +485,7 @@ struct AppModelTests {
         let sawSecond = await pollUntilConnectionState(
             .connected, transport: transport,
             event: .connected(codecValue: OmiConstants.codecPCM16at16kHz), model: model)
-        #expect(sawSecond, "omiConnectionState never updated again in the second session — observation died after the first stop")
+        #expect(sawSecond, "deviceConnectionState never updated again in the second session — observation died after the first stop")
 
         await model.pipeline?.stop()
     }
@@ -499,7 +499,7 @@ struct AppModelTests {
     /// starting unpaired would compose the plain-phone-mic branch, and starting THAT pipeline
     /// means a real, un-faked `PhoneMicAudioSource.start()` — the one real-mic path this whole
     /// suite deliberately never takes (see `omiStatusResubscribesAcrossSessions`). Forgetting
-    /// exercises the exact same shared code (`pairedOmiName` immediate-update fix +
+    /// exercises the exact same shared code (`pairedDeviceName` immediate-update fix +
     /// `stopListening()` → `rebuildIfSourceShapeChanged()`), just via the opposite transition,
     /// with the session itself safely staying on the fake-transport-backed Omi source the whole
     /// time (never falling back to the real mic within the test's short window — see above).
@@ -507,34 +507,34 @@ struct AppModelTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("OmiModelTests-\(UUID().uuidString)")
         let suite = UserDefaults(suiteName: "omi-model-tests-forget-live-\(UUID().uuidString)")!
-        let store = OmiDeviceStore(defaults: suite)
-        store.pair(PairedOmiDevice(id: UUID(), name: "Live Omi"))
+        let store = PairedDeviceStore(defaults: suite)
+        store.pair(PairedDevice(id: UUID(), name: "Live Omi", kind: .omi))
         let transport = FakeOmiTransport()
         let model = AppModel(
             assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root,
-            omiStoreOverride: store, omiTransportOverride: transport)
+            deviceStoreOverride: store, omiTransportOverride: transport)
         await model.ensureSetUp()
         let originalPipeline = model.pipeline
-        #expect(model.composedWithOmi == true)
+        #expect(model.composedWithWearable == true)
 
         await model.pipeline?.start()
         #expect(model.pipeline?.status != .idle)
 
-        await model.forgetOmi()
+        await model.forgetDevice()
 
-        // (a) Settings truth updates right away, mid-session — before this fix, `pairedOmiName`
+        // (a) Settings truth updates right away, mid-session — before this fix, `pairedDeviceName`
         // only ever changed inside `composePipeline`, so it would still read "Live Omi" here.
-        #expect(model.pairedOmiName == nil)
+        #expect(model.pairedDeviceName == nil)
         // Rebuild is deferred: still the same pipeline instance, still composed WITH Omi.
         #expect(model.pipeline === originalPipeline)
-        #expect(model.composedWithOmi == true)
+        #expect(model.composedWithWearable == true)
 
         // (b) Ending the session (the Home screen's Stop path, via `stopListening()`) picks up
         // the deferred rebuild — no relaunch required.
         await model.stopListening()
 
         #expect(model.pipeline?.status == .idle)
-        #expect(model.composedWithOmi == false)
+        #expect(model.composedWithWearable == false)
         #expect(model.pipeline !== originalPipeline)
     }
 }

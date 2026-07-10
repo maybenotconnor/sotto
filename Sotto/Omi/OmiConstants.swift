@@ -21,6 +21,4 @@ enum OmiConstants {
     static let codecMuLawAt16kHz: UInt8 = 10
     static let codecMuLawAt8kHz: UInt8 = 11
     static let codecOpusAt16kHz: UInt8 = 20
-
-    static let lowBatteryThresholdPercent = 15
 }

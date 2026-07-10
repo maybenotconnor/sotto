@@ -273,9 +273,9 @@ private struct HomeScreen: View {
                 Circle().fill(headerState.dotColor).frame(width: 12, height: 12)
             }
             VStack(alignment: .leading, spacing: 1) {
-                // M12 Task 12: source suffix only when an Omi is paired — phone-mic-only
+                // M12 Task 12: source suffix only when a wearable is paired — phone-mic-only
                 // users see the exact same label as before (SPEC "UI & surfacing").
-                if let source = pipeline.activeSourceType, model.pairedOmiName != nil {
+                if let source = pipeline.activeSourceType, model.pairedDeviceName != nil {
                     Text("\(headerState.label) · \(source.displayName)").font(.headline)
                 } else {
                     Text(headerState.label).font(.headline)
@@ -358,12 +358,15 @@ private struct HomeScreen: View {
         // stacked. Only for paired users (SPEC "UI & surfacing"); capture continues on the
         // phone mic regardless, so this is informational, not blocking.
         if let reason = AppModel.bluetoothBannerReason(
-            pairedOmiName: model.pairedOmiName, connectionState: model.omiConnectionState) {
+            pairedDeviceName: model.pairedDeviceName, connectionState: model.deviceConnectionState) {
+            // pairedDeviceKind is non-nil whenever the banner shows (the banner requires a
+            // paired name, and name/kind are set together); the fallback is compiler-required.
+            let deviceName = model.pairedDeviceKind?.displayName ?? "device"
             VStack(spacing: 6) {
                 NoticeBanner(
                     text: reason == .poweredOff
-                        ? "Bluetooth is off — your Omi can't connect. Recording uses the iPhone mic."
-                        : "Sotto needs Bluetooth permission to use your Omi. Recording uses the iPhone mic.",
+                        ? "Bluetooth is off — your \(deviceName) can't connect. Recording uses the iPhone mic."
+                        : "Sotto needs Bluetooth permission to use your \(deviceName). Recording uses the iPhone mic.",
                     color: .red)
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {

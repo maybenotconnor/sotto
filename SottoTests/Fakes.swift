@@ -224,9 +224,9 @@ actor FakeNotificationScheduler: NotificationScheduling {
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
     func schedulePausedNotification() { scheduled += 1 }
     func cancelPausedNotification() { cancelled += 1 }
-    func scheduleSourceFallbackNotification() { sourceFallbackCount += 1 }
-    func scheduleCaptureUnavailableNotification() { captureUnavailableCount += 1 }
-    func scheduleOmiLowBatteryNotification(level: Int) { lowBatteryLevels.append(level) }
+    func scheduleSourceFallbackNotification(deviceName: String) { sourceFallbackCount += 1 }
+    func scheduleCaptureUnavailableNotification(deviceName: String) { captureUnavailableCount += 1 }
+    func scheduleLowBatteryNotification(deviceName: String, level: Int) { lowBatteryLevels.append(level) }
 }
 
 /// NotificationScheduling whose cancel suspends until released — for ordering races.
@@ -237,9 +237,9 @@ actor GatedNotificationScheduler: NotificationScheduling {
 
     func requestAuthorizationIfNeeded() {}
     func schedulePausedNotification() {}
-    func scheduleSourceFallbackNotification() {}
-    func scheduleCaptureUnavailableNotification() {}
-    func scheduleOmiLowBatteryNotification(level: Int) {}
+    func scheduleSourceFallbackNotification(deviceName: String) {}
+    func scheduleCaptureUnavailableNotification(deviceName: String) {}
+    func scheduleLowBatteryNotification(deviceName: String, level: Int) {}
 
     func cancelPausedNotification() async {
         cancelWasRequested = true
@@ -407,13 +407,13 @@ final class FakeLiveActivityController: LiveActivityControlling {
 /// directly, with no CoreBluetooth involved.
 actor FakeOmiTransport: OmiTransport {
     private var eventContinuation: AsyncStream<OmiTransportEvent>.Continuation?
-    private var scanContinuation: AsyncStream<OmiDiscovery>.Continuation?
+    private var scanContinuation: AsyncStream<WearableDiscovery>.Continuation?
     private(set) var eventsCallCount = 0
     private(set) var stopEventsCallCount = 0
     private(set) var lastDeviceID: UUID?
 
-    func scan() -> AsyncStream<OmiDiscovery> {
-        let (stream, continuation) = AsyncStream.makeStream(of: OmiDiscovery.self)
+    func scan() -> AsyncStream<WearableDiscovery> {
+        let (stream, continuation) = AsyncStream.makeStream(of: WearableDiscovery.self)
         scanContinuation = continuation
         return stream
     }
@@ -434,7 +434,7 @@ actor FakeOmiTransport: OmiTransport {
 
     // Test drivers
     func emit(_ event: OmiTransportEvent) { eventContinuation?.yield(event) }
-    func emitDiscovery(_ d: OmiDiscovery) { scanContinuation?.yield(d) }
+    func emitDiscovery(_ d: WearableDiscovery) { scanContinuation?.yield(d) }
 
     /// Emits a well-formed audio notification wrapping `payload` at `packet#`.
     func emitAudio(packet: UInt16, index: UInt8 = 0, payload: [UInt8]) {
@@ -457,7 +457,7 @@ actor FakeConnectableAudioSource: ConnectableAudioSource {
     nonisolated let sourceType: AudioSourceType = .omi
     nonisolated var isAvailable: Bool { true }
     private var continuation: AsyncStream<AudioChunk>.Continuation?
-    private var stateContinuations: [UUID: AsyncStream<OmiConnectionState>.Continuation] = [:]
+    private var stateContinuations: [UUID: AsyncStream<DeviceConnectionState>.Continuation] = [:]
     private(set) var startCount = 0
     private(set) var stopCount = 0
 
@@ -473,14 +473,14 @@ actor FakeConnectableAudioSource: ConnectableAudioSource {
         for c in stateContinuations.values { c.finish() }
         stateContinuations.removeAll()
     }
-    func connectionStates() -> AsyncStream<OmiConnectionState> {
+    func connectionStates() -> AsyncStream<DeviceConnectionState> {
         let id = UUID()
-        let (stream, c) = AsyncStream.makeStream(of: OmiConnectionState.self)
+        let (stream, c) = AsyncStream.makeStream(of: DeviceConnectionState.self)
         stateContinuations[id] = c
         return stream
     }
     // Test drivers
-    func setState(_ s: OmiConnectionState) { for c in stateContinuations.values { c.yield(s) } }
+    func setState(_ s: DeviceConnectionState) { for c in stateContinuations.values { c.yield(s) } }
     func emitChunk(_ chunk: AudioChunk) { continuation?.yield(chunk) }
 }
 

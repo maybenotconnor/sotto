@@ -31,7 +31,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             listeningSection
-            omiSection
+            deviceSection
             transcriptionSection
             storageSection
             backupSection
@@ -39,7 +39,7 @@ struct SettingsView: View {
             aboutSection
         }
         .navigationTitle("Settings")
-        .sheet(isPresented: $showPairSheet) { OmiPairSheet(model: model) }
+        .sheet(isPresented: $showPairSheet) { PairDeviceSheet(model: model, kind: pairableKind) }
         .task {
             let settings = model.settings
             vadThreshold = settings.vadThreshold
@@ -70,7 +70,7 @@ struct SettingsView: View {
 
     private var listeningSection: some View {
         Section("Listening") {
-            if let name = model.pairedOmiName {
+            if let name = model.pairedDeviceName {
                 LabeledContent("Audio source", value: "\(name) + iPhone mic fallback")
             } else {
                 LabeledContent("Audio source", value: "iPhone microphone")
@@ -102,43 +102,47 @@ struct SettingsView: View {
         }
     }
 
-    /// M12 Settings (Task 11): pairing status + pair/forget actions for an Omi wearable.
+    /// The one pairable device family today. A future multi-device Settings screen
+    /// replaces this constant with a picker, not this section's structure.
+    private let pairableKind: DeviceKind = .omi
+
+    /// M12 Settings (Task 11): pairing status + pair/forget actions for a wearable.
     /// This section's device/status/battery readout always reflects the pairing store
-    /// immediately (`AppModel.pairOmi`/`forgetOmi` set it right away) — but the pipeline's
+    /// immediately (`AppModel.pairDevice`/`forgetDevice` set it right away) — but the pipeline's
     /// ACTUAL audio source only recomposes right away if nothing is listening
     /// (`AppModel.rebuildPipelineIfIdle`); otherwise the swap is deferred until the current
     /// session ends (`AppModel.stopListening` → `rebuildIfSourceShapeChanged`, M12 final
     /// review Important #2) — mirrors the existing "Changes apply..." convention used for the
     /// Advanced listening settings above.
-    private var omiSection: some View {
-        Section("Omi Device") {
-            if let name = model.pairedOmiName {
+    private var deviceSection: some View {
+        Section("\(pairableKind.displayName) Device") {
+            if let name = model.pairedDeviceName {
                 LabeledContent("Device", value: name)
-                LabeledContent("Status", value: omiStatusLabel)
-                if let battery = model.omiBatteryLevel {
+                LabeledContent("Status", value: deviceStatusLabel)
+                if let battery = model.deviceBatteryLevel {
                     LabeledContent("Battery", value: "\(battery)%")
                 }
-                if let failure = model.omiSetupFailure {
+                if let failure = model.deviceSetupFailure {
                     Text(failure).font(.caption).foregroundStyle(.red)
                 }
                 Button("Forget This Device", role: .destructive) { showForgetConfirm = true }
                     .confirmationDialog("Forget \(name)?", isPresented: $showForgetConfirm) {
-                        Button("Forget", role: .destructive) { Task { await model.forgetOmi() } }
+                        Button("Forget", role: .destructive) { Task { await model.forgetDevice() } }
                     } message: {
                         Text("Sotto will stop connecting to it and use the iPhone microphone.")
                     }
                 Text("Sotto switches to using it right away if nothing's listening, otherwise once the current session ends.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Button("Pair Omi Device…") { showPairSheet = true }
-                Text("Wear an Omi pendant and Sotto records from it automatically, falling back to the iPhone mic when it's out of range.")
+                Button("Pair \(pairableKind.displayName) Device…") { showPairSheet = true }
+                Text("Wear an \(pairableKind.displayName) pendant and Sotto records from it automatically, falling back to the iPhone mic when it's out of range.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
 
-    private var omiStatusLabel: String {
-        switch model.omiConnectionState {
+    private var deviceStatusLabel: String {
+        switch model.deviceConnectionState {
         case .streaming: "Streaming"
         case .connected: "Connected"
         case .connecting: "Connecting…"

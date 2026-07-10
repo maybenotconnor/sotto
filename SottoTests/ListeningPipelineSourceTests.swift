@@ -15,7 +15,7 @@ struct ListeningPipelineSourceTests {
     @Test func fallbackRollsRecorderOverAndNotifies() async throws {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         let recorder = FakeRecorder()
         let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: failover, recorder: recorder,
@@ -36,7 +36,7 @@ struct ListeningPipelineSourceTests {
         #expect(pipeline.activeSourceType == .omi)
         #expect(await recorder.rolloverCalls.last == .omi)
         // Recovery is silent (no fallback re-fired) and the earlier fallback notification
-        // is still exactly one — omiRecovered schedules nothing.
+        // is still exactly one — wearableRecovered schedules nothing.
         #expect(await notifications.sourceFallbackCount == 1)
         await pipeline.stop()
         #expect(pipeline.activeSourceType == nil)
@@ -47,7 +47,7 @@ struct ListeningPipelineSourceTests {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         await mic.setStartError(Boom())
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: failover, recorder: FakeRecorder(),
                                          notifications: notifications)
@@ -71,7 +71,7 @@ struct ListeningPipelineSourceTests {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         await mic.setStartError(Boom())
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: failover, recorder: FakeRecorder(),
                                          notifications: notifications)
@@ -101,7 +101,7 @@ struct ListeningPipelineSourceTests {
         // `.phoneMic` (previous test) — the recorder's segment tagging needs that — but the
         // Live Activity must never surface it as a label. Rendering "iPhone mic" on every
         // lock-screen update would be new, unwanted chatter for the vast majority of users
-        // who never paired an Omi (mirrors ContentView's `pairedOmiName != nil` gate on the
+        // who never paired an Omi (mirrors ContentView's `pairedDeviceName != nil` gate on the
         // home header).
         let plainMic = FakeAudioSource()
         let plainActivity = FakeLiveActivityController()
@@ -121,7 +121,7 @@ struct ListeningPipelineSourceTests {
         // to SourceSwitchingAudioSource, and AppModel only builds one when paired).
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         let switchingActivity = FakeLiveActivityController()
         let switchingPipeline = ListeningPipeline(
             source: failover, recorder: FakeRecorder(), liveActivity: switchingActivity)
@@ -134,7 +134,7 @@ struct ListeningPipelineSourceTests {
 
     @Test func repeatFallbackEventDoesNotDoubleNotify() async throws {
         // Regression for the RACE B repeat: FailoverAudioSource can emit the SAME source
-        // (.phoneMic/.omiDisconnected) twice in a row with no intervening recovery, when the
+        // (.phoneMic/.wearableDisconnected) twice in a row with no intervening recovery, when the
         // Omi drops again during a suspended phoneMic.stop() mid-return-hysteresis. The
         // pipeline must still roll the recorder over both times (harmless no-op finalize) but
         // must only fire the user-facing notification once.
@@ -149,7 +149,7 @@ struct ListeningPipelineSourceTests {
             returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: config)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: config)
         let recorder = FakeRecorder()
         let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: failover, recorder: recorder,
@@ -175,7 +175,7 @@ struct ListeningPipelineSourceTests {
         try await Task.sleep(for: .milliseconds(700))       // let everything settle
 
         #expect(pipeline.activeSourceType == .phoneMic)
-        // Still exactly one fallback notification despite the repeat .omiDisconnected event.
+        // Still exactly one fallback notification despite the repeat .wearableDisconnected event.
         #expect(await notifications.sourceFallbackCount == 1)
         // The recorder DID see the repeat rollover call (harmless no-op finalize-wise).
         #expect(await recorder.rolloverCalls.filter { $0 == .phoneMic }.count >= 2)
@@ -241,7 +241,7 @@ struct ListeningPipelineSourceTests {
         // uncontrollable actor-scheduling fairness between two near-instant fakes.
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(omi: omi, phoneMic: mic, config: fastConfig)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         let recorder = SlowRolloverRecorder()
         let pipeline = ListeningPipeline(source: failover, recorder: recorder)
         await pipeline.start()
@@ -255,7 +255,7 @@ struct ListeningPipelineSourceTests {
         #expect(pipeline.activeSourceType == .omi)
 
         await omi.setState(.disconnected)               // arms reconnectGrace (60ms)
-        // Grace fires -> phoneMic activates -> .omiDisconnected emitted -> pipeline's
+        // Grace fires -> phoneMic activates -> .wearableDisconnected emitted -> pipeline's
         // handleSourceChange enters recorder.rollover(to:), which appends to rolloverCalls
         // FIRST and then blocks for 150ms. Waiting on the append (20ms poll) instead of a
         // fixed sleep guarantees stop() lands while the change is genuinely in flight, with
