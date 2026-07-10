@@ -136,10 +136,18 @@ private struct HomeScreen: View {
                 .listRowSeparator(.hidden)
             } else if model.historySections.isEmpty && model.hasLoadedHistoryOnce {
                 Section {
-                    Text(emptyStateText)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .selectionDisabled(true)
+                    VStack(spacing: 14) {
+                        WaveMark()
+                            .stroke(
+                                Color("Ink").opacity(0.55),
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .frame(width: 150, height: 30)
+                        Text(emptyStateText)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 24)
+                    .selectionDisabled(true)
                 }
                 .listRowSeparator(.hidden)
             }

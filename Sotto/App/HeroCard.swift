@@ -269,6 +269,37 @@ struct PulsingDot: View {
     }
 }
 
+/// The app icon's speech-line — a decaying waveform settling into a ruled line — as a
+/// SwiftUI Shape. Centerline geometry is copied from the icon spec's 160-unit space
+/// (docs/superpowers/specs/2026-07-10-app-icon-design.md) and fit-scaled into rect.
+struct WaveMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 26, y: 52))
+        path.addCurve(
+            to: CGPoint(x: 36, y: 42),
+            control1: CGPoint(x: 28.5, y: 47.5), control2: CGPoint(x: 32, y: 42))
+        path.addCurve(
+            to: CGPoint(x: 54, y: 60),
+            control1: CGPoint(x: 44, y: 42), control2: CGPoint(x: 46, y: 60))
+        path.addCurve(
+            to: CGPoint(x: 68, y: 47),
+            control1: CGPoint(x: 61, y: 60), control2: CGPoint(x: 61, y: 47))
+        path.addCurve(
+            to: CGPoint(x: 78, y: 52),
+            control1: CGPoint(x: 72, y: 47), control2: CGPoint(x: 74, y: 52))
+        path.addLine(to: CGPoint(x: 134, y: 52))
+
+        let bounds = CGRect(x: 26, y: 42, width: 108, height: 18)
+        let scale = min(rect.width / bounds.width, rect.height / bounds.height)
+        let transform = CGAffineTransform.identity
+            .translatedBy(x: rect.midX, y: rect.midY)
+            .scaledBy(x: scale, y: scale)
+            .translatedBy(x: -bounds.midX, y: -bounds.midY)
+        return path.applying(transform)
+    }
+}
+
 /// One notice line inside the card: leading symbol, footnote text, optional trailing bold
 /// action. Warning rows tint the symbol red, not the body text (spec). Explicit button
 /// style is required — the row lives inside a List row that already contains other buttons.
