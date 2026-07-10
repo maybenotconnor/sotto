@@ -367,7 +367,7 @@ struct AppModelTests {
         #expect(model.pipeline?.status == .idle)
         #expect(model.pairedOmiName == nil)
 
-        let discovery = OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50)
+        let discovery = WearableDiscovery(id: UUID(), name: "Test Omi", rssi: -50, kind: .omi)
         await model.pairOmi(discovery)
 
         #expect(model.pairedOmiName == "Test Omi")
@@ -379,7 +379,7 @@ struct AppModelTests {
     /// than silently no-op, so the very first pairing (e.g. onboarding) still takes effect.
     @Test func pairOmiBeforeSetupBootstrapsFullSetup() async throws {
         let model = omiModel(suiteSuffix: "pair-before-setup")
-        let discovery = OmiDiscovery(id: UUID(), name: "Early Omi", rssi: -40)
+        let discovery = WearableDiscovery(id: UUID(), name: "Early Omi", rssi: -40, kind: .omi)
 
         await model.pairOmi(discovery)
 
@@ -394,7 +394,7 @@ struct AppModelTests {
     @Test func forgetOmiClearsPairedNameAndReadings() async throws {
         let model = omiModel(suiteSuffix: "forget")
         await model.ensureSetUp()
-        await model.pairOmi(OmiDiscovery(id: UUID(), name: "Test Omi", rssi: -50))
+        await model.pairOmi(WearableDiscovery(id: UUID(), name: "Test Omi", rssi: -50, kind: .omi))
         #expect(model.pairedOmiName == "Test Omi")
 
         await model.forgetOmi()
@@ -426,7 +426,7 @@ struct AppModelTests {
     /// `omi.connectionStates()` synchronously before returning.
     @discardableResult
     private func pollUntilConnectionState(
-        _ expected: OmiConnectionState, transport: FakeOmiTransport, event: OmiTransportEvent,
+        _ expected: DeviceConnectionState, transport: FakeOmiTransport, event: OmiTransportEvent,
         model: AppModel, timeout: Duration = .seconds(1)
     ) async -> Bool {
         let deadline = ContinuousClock.now + timeout

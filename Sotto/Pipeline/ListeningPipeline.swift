@@ -331,7 +331,7 @@ final class ListeningPipeline {
 
     /// M12: reacts to a `SourceSwitchingAudioSource`'s `sourceChanges()` stream. Rare race
     /// (FailoverAudioSource RACE B recovery) can redeliver the SAME source with the SAME
-    /// reason back-to-back (e.g. two `.phoneMic`/`.omiDisconnected` events with no
+    /// reason back-to-back (e.g. two `.phoneMic`/`.wearableDisconnected` events with no
     /// intervening recovery) — `recorder.rollover(to:)` is still called every time (a no-op
     /// finalize-wise when nothing is open), but the log line and user-facing notification are
     /// gated on the source actually having changed, so a repeat never double-notifies.
@@ -345,7 +345,7 @@ final class ListeningPipeline {
                 await recorder.setActiveSource(source)
                 log("Capturing via \(source.displayName)")
             }
-        case .omiDisconnected:
+        case .wearableDisconnected:
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
@@ -355,7 +355,7 @@ final class ListeningPipeline {
                 log("Omi disconnected — continuing on iPhone mic")
                 await notifications?.scheduleSourceFallbackNotification()
             }
-        case .omiRecovered:
+        case .wearableRecovered:
             guard let source = change.source else { return }
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source

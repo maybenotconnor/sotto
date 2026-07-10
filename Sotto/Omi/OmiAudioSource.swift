@@ -3,7 +3,7 @@ import Foundation
 /// AudioSource over an OmiTransport: raw BLE notifications → frames → floats → 4096-sample
 /// AudioChunks. Connection lifecycle (reconnect) lives in the TRANSPORT; failover timing
 /// lives in FailoverAudioSource. This actor is a decode pipeline plus state relay.
-actor OmiAudioSource: ConnectableAudioSource {
+actor OmiAudioSource: WearableAudioSource {
     nonisolated let sourceType: AudioSourceType = .omi
     nonisolated var isAvailable: Bool { true }
 
@@ -19,7 +19,7 @@ actor OmiAudioSource: ConnectableAudioSource {
     private var chunker = SampleChunker()
     private var hasStreamedSinceConnect = false
 
-    private var stateContinuations: [UUID: AsyncStream<OmiConnectionState>.Continuation] = [:]
+    private var stateContinuations: [UUID: AsyncStream<DeviceConnectionState>.Continuation] = [:]
     private var batteryContinuations: [UUID: AsyncStream<Int>.Continuation] = [:]
     private(set) var latestBatteryLevel: Int?
     private(set) var setupFailureMessage: String?
@@ -69,9 +69,9 @@ actor OmiAudioSource: ConnectableAudioSource {
         batteryContinuations.removeAll()
     }
 
-    func connectionStates() -> AsyncStream<OmiConnectionState> {
+    func connectionStates() -> AsyncStream<DeviceConnectionState> {
         let id = UUID()
-        let (stream, continuation) = AsyncStream.makeStream(of: OmiConnectionState.self)
+        let (stream, continuation) = AsyncStream.makeStream(of: DeviceConnectionState.self)
         stateContinuations[id] = continuation
         continuation.onTermination = { [weak self] _ in
             Task { await self?.removeStateContinuation(id) }
@@ -92,7 +92,7 @@ actor OmiAudioSource: ConnectableAudioSource {
     private func removeStateContinuation(_ id: UUID) { stateContinuations[id] = nil }
     private func removeBatteryContinuation(_ id: UUID) { batteryContinuations[id] = nil }
 
-    private func yieldState(_ state: OmiConnectionState) {
+    private func yieldState(_ state: DeviceConnectionState) {
         for continuation in stateContinuations.values { continuation.yield(state) }
     }
 

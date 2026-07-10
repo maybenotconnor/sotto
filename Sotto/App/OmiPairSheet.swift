@@ -12,7 +12,7 @@ import SwiftUI
 struct OmiPairSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var discoveries: [OmiDiscovery] = []
+    @State private var discoveries: [WearableDiscovery] = []
 
     var body: some View {
         NavigationStack {

@@ -29,7 +29,7 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
     private var peripheral: CBPeripheral?
     private var targetDeviceID: UUID?
     private var eventContinuation: AsyncStream<OmiTransportEvent>.Continuation?
-    private var scanContinuation: AsyncStream<OmiDiscovery>.Continuation?
+    private var scanContinuation: AsyncStream<WearableDiscovery>.Continuation?
     private var audioCharacteristic: CBCharacteristic?
 
     /// True once `didConnect` has fired for the current session's peripheral, until either a
@@ -47,8 +47,8 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
 
     // MARK: OmiTransport
 
-    func scan() async -> AsyncStream<OmiDiscovery> {
-        let (stream, continuation) = AsyncStream.makeStream(of: OmiDiscovery.self)
+    func scan() async -> AsyncStream<WearableDiscovery> {
+        let (stream, continuation) = AsyncStream.makeStream(of: WearableDiscovery.self)
         queue.async { [self] in
             scanContinuation?.finish()
             scanContinuation = continuation
@@ -163,10 +163,11 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         if publicScanActive {
-            scanContinuation?.yield(OmiDiscovery(
+            scanContinuation?.yield(WearableDiscovery(
                 id: peripheral.identifier,
                 name: peripheral.name ?? "Omi device",
-                rssi: RSSI.intValue))
+                rssi: RSSI.intValue,
+                kind: .omi))
         }
         if peripheral.identifier == targetDeviceID {
             rediscoveryScanActive = false

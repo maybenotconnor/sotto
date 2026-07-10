@@ -66,8 +66,8 @@ final class AppModel {
     /// so it's deliberately excluded here (Settings' `omiStatusLabel` still surfaces it as
     /// status text, just not as an actionable banner).
     nonisolated static func bluetoothBannerReason(
-        pairedOmiName: String?, connectionState: OmiConnectionState?
-    ) -> OmiBluetoothUnavailableReason? {
+        pairedOmiName: String?, connectionState: DeviceConnectionState?
+    ) -> BluetoothUnavailableReason? {
         guard pairedOmiName != nil, case .unavailable(let reason) = connectionState,
               reason == .poweredOff || reason == .unauthorized
         else { return nil }
@@ -133,7 +133,7 @@ final class AppModel {
     /// decide whether a deferred rebuild is owed once the session ends.
     private(set) var composedWithOmi = false
     private(set) var omiBatteryLevel: Int?
-    private(set) var omiConnectionState: OmiConnectionState?
+    private(set) var omiConnectionState: DeviceConnectionState?
     private(set) var omiSetupFailure: String?
     /// Two independent pumps (connection-state, battery) rather than one task juggling both
     /// via `async let` — capturing `self` into an `async let`'s child task trips Swift 6's
@@ -889,7 +889,7 @@ final class AppModel {
             let omi = OmiAudioSource(
                 transport: omiTransportOverride ?? CoreBluetoothOmiTransport(), deviceID: paired.id)
             omiSource = omi
-            source = FailoverAudioSource(omi: omi, phoneMic: PhoneMicAudioSource())
+            source = FailoverAudioSource(wearable: omi, phoneMic: PhoneMicAudioSource())
             pairedOmiName = paired.name
             composedWithOmi = true
         } else {
@@ -994,17 +994,17 @@ final class AppModel {
     }
 
     /// M12 Settings low-battery notification: fires once per drop below
-    /// `OmiConstants.lowBatteryThresholdPercent`, re-arming only once the level recovers
+    /// `WearableConstants.lowBatteryThresholdPercent`, re-arming only once the level recovers
     /// with a 10-point margin (avoids re-notifying on every reading while hovering at the
     /// line). AppModel holds no scheduler reference of its own (mirrors `performSetUp`,
     /// which also constructs `UserNotificationScheduler()` inline) — constructed fresh here.
     private func applyOmiBattery(_ level: Int) {
         omiBatteryLevel = level
-        if level <= OmiConstants.lowBatteryThresholdPercent, !lowBatteryNotified {
+        if level <= WearableConstants.lowBatteryThresholdPercent, !lowBatteryNotified {
             lowBatteryNotified = true
             Task { await UserNotificationScheduler().scheduleOmiLowBatteryNotification(level: level) }
         }
-        if level > OmiConstants.lowBatteryThresholdPercent + 10 { lowBatteryNotified = false }
+        if level > WearableConstants.lowBatteryThresholdPercent + 10 { lowBatteryNotified = false }
     }
 
     /// Settings "Pair Omi Device…" (Task 11): the pair sheet owns its own scan transport
@@ -1021,7 +1021,7 @@ final class AppModel {
     /// listening, the new source composes once the session actually ends —
     /// `rebuildIfSourceShapeChanged()`, called from every place that can bring the pipeline
     /// back to idle — not on the next relaunch.
-    func pairOmi(_ discovery: OmiDiscovery) async {
+    func pairOmi(_ discovery: WearableDiscovery) async {
         (omiStoreOverride ?? OmiDeviceStore()).pair(
             PairedOmiDevice(id: discovery.id, name: discovery.name))
         pairedOmiName = discovery.name
