@@ -176,12 +176,15 @@ private struct HomeScreen: View {
                         confirmingMerge = true
                     } label: {
                         if merging {
+                            // Explicit tint: .inkProminent() sets the button's tint to Ink,
+                            // which the spinner would inherit and vanish into the capsule.
                             ProgressView()
+                                .tint(Color("Porcelain"))
                         } else {
                             Text("Merge \(mergeCount) conversations")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .inkProminent()
                     .disabled(merging || { if case .eligible = eligibility { false } else { true } }())
                     if let hint = eligibilityHint {
                         Text(hint)
