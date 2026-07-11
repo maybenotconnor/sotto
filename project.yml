@@ -8,6 +8,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    DEVELOPMENT_TEAM: XV3864F3BP
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
@@ -55,18 +56,16 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     entitlements:
       path: Sotto/Sotto.entitlements
-      # TEMPORARY — free-provisioning workaround (see GitHub issue #5).
-      # iCloud entitlements removed so a free "Personal Team" can sign the app for
-      # on-device testing: a Personal Team cannot grant CloudDocuments/ubiquity-container
-      # capabilities. Empty `properties` => xcodegen writes an empty <dict/>, and
-      # ICloudSyncSink no-ops at runtime (the ubiquity container resolves to nil).
-      # RESTORE before release:
-      #   git checkout project.yml Sotto/Sotto.entitlements && xcodegen generate
-      # Original iCloud entitlements to restore (also recorded in issue #5):
-      #   com.apple.developer.icloud-container-identifiers: [iCloud.com.decanlys.Sotto]
-      #   com.apple.developer.icloud-services: [CloudDocuments]
-      #   com.apple.developer.ubiquity-container-identifiers: [iCloud.com.decanlys.Sotto]
-      properties: {}
+      # xcodegen REGENERATES this file on every `xcodegen generate`; without these
+      # properties it writes an empty <dict/>, silently stripping the iCloud capability
+      # (discovered when the signing round-trip's entitlements kept reverting).
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.decanlys.Sotto
+        com.apple.developer.icloud-services:
+          - CloudDocuments
+        com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.com.decanlys.Sotto
   SottoWidgets:
     type: app-extension
     platform: iOS
