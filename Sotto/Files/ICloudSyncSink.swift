@@ -9,7 +9,7 @@ import Foundation
 /// → the resolver returns nil and every op is a silent no-op (the "sync off for now, never an
 /// error" degrade). Retried implicitly by the next event or a manual "Back up now".
 struct ICloudSyncSink: TranscriptSyncSink {
-    static let containerIdentifier = "iCloud.com.decanlys.Sotto"
+    static let containerIdentifier = "iCloud.app.decanlys.sotto"
 
     /// Resolves `<container>` (NOT yet `Transcripts/`), or nil when iCloud is unavailable.
     /// Injected so tests can supply a temp dir or force the unavailable path (`{ nil }`).

@@ -38,7 +38,7 @@ struct WiFiMonitor: NetworkMonitoring {
         let monitor = NWPathMonitor()
         let box = self.box
         monitor.pathUpdateHandler = { path in box.update(path) }
-        monitor.start(queue: DispatchQueue(label: "com.decanlys.Sotto.WiFiMonitor", qos: .utility))
+        monitor.start(queue: DispatchQueue(label: "app.decanlys.sotto.WiFiMonitor", qos: .utility))
         self.monitor = monitor
     }
 

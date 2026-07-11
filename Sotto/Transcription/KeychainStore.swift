@@ -6,7 +6,7 @@ import Security
 struct KeychainStore: Sendable {
     let service: String
 
-    init(service: String = "com.decanlys.Sotto") {
+    init(service: String = "app.decanlys.sotto") {
         self.service = service
     }
 

@@ -1,6 +1,6 @@
 name: Sotto
 options:
-  bundleIdPrefix: com.decanlys
+  bundleIdPrefix: app.decanlys
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -33,6 +33,12 @@ targets:
         product: Opus
       - target: SottoWidgets
         embed: true
+    settings:
+      base:
+        # Explicit because bundleIdPrefix + target name would derive app.decanlys.Sotto;
+        # the identity is all-lowercase. (The original com.decanlys.Sotto is locked by
+        # the defunct free team's App ID registration — see issue #5 follow-up.)
+        PRODUCT_BUNDLE_IDENTIFIER: app.decanlys.sotto
     info:
       path: Sotto/Info.plist
       properties:
@@ -61,11 +67,11 @@ targets:
       # (discovered when the signing round-trip's entitlements kept reverting).
       properties:
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.decanlys.Sotto
+          - iCloud.app.decanlys.sotto
         com.apple.developer.icloud-services:
           - CloudDocuments
         com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.decanlys.Sotto
+          - iCloud.app.decanlys.sotto
   SottoWidgets:
     type: app-extension
     platform: iOS
@@ -82,7 +88,7 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
-        PRODUCT_BUNDLE_IDENTIFIER: com.decanlys.Sotto.SottoWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: app.decanlys.sotto.SottoWidgets
     info:
       path: SottoWidgets/Info.plist
       properties:

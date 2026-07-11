@@ -24,7 +24,7 @@ actor TranscriptionQueue {
     private(set) var jobs: [TranscriptionJob] = []
     private var draining = false
     private var transitionHandler: (@Sendable (JobTransition) -> Void)?
-    private let logger = Logger(subsystem: "com.decanlys.Sotto", category: "TranscriptionQueue")
+    private let logger = Logger(subsystem: "app.decanlys.sotto", category: "TranscriptionQueue")
 
     var pendingCount: Int { jobs.filter { $0.state == .pending }.count }
 

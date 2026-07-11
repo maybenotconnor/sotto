@@ -820,8 +820,8 @@ final class AppModel {
             // (2026-07-05: observed on simulator relaunches; key survived, onboarding did
             // not reappear, so the defaults plist was NOT wiped). Logs the raw stored
             // values every launch so the next occurrence is checkable in Console.app
-            // (subsystem com.decanlys.Sotto, category Settings) instead of unreproducible.
-            Logger(subsystem: "com.decanlys.Sotto", category: "Settings").info(
+            // (subsystem app.decanlys.sotto, category Settings) instead of unreproducible.
+            Logger(subsystem: "app.decanlys.sotto", category: "Settings").info(
                 "launch engine=\(settings.transcriptionEngine.rawValue, privacy: .public) rawNew=\(settings.defaults.string(forKey: "transcriptionEngine") ?? "nil", privacy: .public) rawLegacy=\(String(describing: settings.defaults.object(forKey: "deepgramEnabled") ?? "nil"), privacy: .public) hasKey=\(keychain.get("deepgramAPIKey") != nil)")
             let hasDeepgramKey = settings.transcriptionEngine == .deepgram && keychain.get("deepgramAPIKey") != nil
             if onDeviceReady || hasDeepgramKey {

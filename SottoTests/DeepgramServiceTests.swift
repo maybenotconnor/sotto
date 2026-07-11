@@ -86,7 +86,7 @@ struct DeepgramServiceTests {
     }
 
     @Test func keychainRoundTrip() {
-        let store = KeychainStore(service: "com.decanlys.Sotto.tests")
+        let store = KeychainStore(service: "app.decanlys.sotto.tests")
         store.delete("dg")
         #expect(store.get("dg") == nil)
         #expect(store.set("secret-123", for: "dg"))

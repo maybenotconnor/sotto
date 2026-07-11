@@ -24,7 +24,7 @@ import Foundation
 ///   the radio on, so stopping one doesn't silently kill the other, and the radio only
 ///   stops once both are done.
 final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.decanlys.Sotto.omi-ble")
+    private let queue = DispatchQueue(label: "app.decanlys.sotto.omi-ble")
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var targetDeviceID: UUID?
@@ -107,7 +107,7 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
         guard central == nil else { return }
         central = CBCentralManager(
             delegate: self, queue: queue,
-            options: [CBCentralManagerOptionRestoreIdentifierKey: "com.decanlys.Sotto.omi"])
+            options: [CBCentralManagerOptionRestoreIdentifierKey: "app.decanlys.sotto.omi"])
     }
 
     private func startScanIfPoweredOn() {

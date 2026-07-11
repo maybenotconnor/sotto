@@ -13,7 +13,7 @@ final class FormatConverter: @unchecked Sendable {
     static let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
 
-    private let logger = Logger(subsystem: "com.decanlys.Sotto", category: "FormatConverter")
+    private let logger = Logger(subsystem: "app.decanlys.sotto", category: "FormatConverter")
 
     private let converter: AVAudioConverter
     private let ratio: Double
