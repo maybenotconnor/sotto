@@ -73,12 +73,14 @@ struct SottoLiveActivityWidget: Widget {
                     }
                 }
                 Spacer()
+                // Ink capsule, not state-tinted: the action word carries the meaning
+                // (ink-prominent spec extending the header spec's "no red button");
+                // the glyph keeps the green/orange state signal.
                 Button(intent: ToggleListeningIntent()) {
                     Text(context.state.phase.isPaused ? "Resume" : "Pause")
                         .font(.callout.bold())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(context.state.phase.isPaused ? .green : .orange)
+                .inkProminent()
             }
             .padding()
         } dynamicIsland: { context in
@@ -99,7 +101,7 @@ struct SottoLiveActivityWidget: Widget {
                     Button(intent: ToggleListeningIntent()) {
                         Text(context.state.phase.isPaused ? "Resume" : "Pause")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .inkProminent()
                 }
             } compactLeading: {
                 Image(systemName: context.state.phase.compactGlyph)

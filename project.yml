@@ -74,6 +74,11 @@ targets:
       - path: SottoWidgets
       - path: Sotto/LiveActivity/SottoActivityAttributes.swift
       - path: Sotto/LiveActivity/ToggleListeningIntent.swift
+      # Ink prominent buttons in the Live Activity: the shared style helper plus the
+      # Ink/Porcelain colorsets — Color("Ink") resolves against the extension's own
+      # bundle, so the catalog must ship in both (2026-07-10 ink-prominent spec).
+      - path: Sotto/App/InkProminent.swift
+      - path: Sotto/Assets.xcassets
     settings:
       base:
         SWIFT_VERSION: "6.0"

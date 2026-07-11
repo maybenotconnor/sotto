@@ -66,7 +66,7 @@ struct OnboardingView: View {
             switch model.assetState {
             case .installed:
                 Text("The speech model is already installed.").multilineTextAlignment(.center)
-                Button("Start using Sotto") { completeIfConsented() }.buttonStyle(.borderedProminent)
+                Button("Start using Sotto") { completeIfConsented() }.inkProminent()
             case .downloading(let fraction):
                 ProgressView(value: fraction).padding(.horizontal, 48)
                 Text("Downloading the speech model…").font(.footnote).foregroundStyle(.secondary)
@@ -74,12 +74,12 @@ struct OnboardingView: View {
                 Text("This device can't run on-device transcription — recordings still save and transcribe on a supported iPhone.")
                     .multilineTextAlignment(.center).padding(.horizontal)
                 Button("Continue") { completeIfConsented() }
-                    .buttonStyle(.borderedProminent)
+                    .inkProminent()
             default:
                 Text("Sotto transcribes on this iPhone — nothing leaves your device. The model downloads once.")
                     .multilineTextAlignment(.center).padding(.horizontal)
                 Button("Download model") { Task { await model.downloadSpeechModel() } }
-                    .buttonStyle(.borderedProminent)
+                    .inkProminent()
                 Button("Skip for now — recordings still save") { completeIfConsented() }
                     .font(.footnote)
             }
@@ -118,7 +118,7 @@ struct OnboardingView: View {
             Image(systemName: icon).font(.system(size: 56)).foregroundStyle(tint)
             Text(title).font(.title2.bold()).multilineTextAlignment(.center)
             Text(bodyText).multilineTextAlignment(.center).padding(.horizontal)
-            Button(button, action: action).buttonStyle(.borderedProminent)
+            Button(button, action: action).inkProminent()
             Spacer()
         }
         .padding()
