@@ -27,7 +27,7 @@
 - Consumes: nothing from other tasks.
 - Produces: a commit on `main` restoring the iCloud capability; Task 2 references its SHA when closing issue #5.
 
-- [ ] **Step 1: Add DEVELOPMENT_TEAM to top-level settings**
+- [x] **Step 1: Add DEVELOPMENT_TEAM to top-level settings**
 
 In `project.yml`, change the top-level `settings` block (currently lines 7–10) to:
 
@@ -39,7 +39,7 @@ settings:
     DEVELOPMENT_TEAM: XV3864F3BP
 ```
 
-- [ ] **Step 2: Restore the iCloud entitlement properties**
+- [x] **Step 2: Restore the iCloud entitlement properties**
 
 In `project.yml`, replace the `entitlements` block under `targets.Sotto` (currently lines 56–69, the block with the `# TEMPORARY — free-provisioning workaround` comment and `properties: {}`) with:
 
@@ -58,27 +58,27 @@ In `project.yml`, replace the `entitlements` block under `targets.Sotto` (curren
           - iCloud.com.decanlys.Sotto
 ```
 
-- [ ] **Step 3: Regenerate the project**
+- [x] **Step 3: Regenerate the project**
 
 Run: `xcodegen generate`
 Expected: `Created project at /Users/connor/OpenCloud/Personal/GithubProjects/sotto/Sotto.xcodeproj`
 
-- [ ] **Step 4: Verify the entitlements file matches the pre-workaround version**
+- [x] **Step 4: Verify the entitlements file matches the pre-workaround version**
 
 Run: `git show 5162b92^:Sotto/Sotto.entitlements | diff - Sotto/Sotto.entitlements && echo IDENTICAL`
 Expected: `IDENTICAL` (no diff lines — byte-identical to the version before commit 5162b92 removed it)
 
-- [ ] **Step 5: Verify DEVELOPMENT_TEAM landed in the pbxproj**
+- [x] **Step 5: Verify DEVELOPMENT_TEAM landed in the pbxproj**
 
 Run: `grep -c "DEVELOPMENT_TEAM = XV3864F3BP;" Sotto.xcodeproj/project.pbxproj`
 Expected: `2` or more (project-level Debug + Release configurations; targets inherit project settings)
 
-- [ ] **Step 6: Verify a simulator build still compiles**
+- [x] **Step 6: Verify a simulator build still compiles**
 
 Run: `xcodebuild -project Sotto.xcodeproj -scheme Sotto -destination 'generic/platform=iOS Simulator' build 2>&1 | tail -5`
 Expected: `** BUILD SUCCEEDED **` (simulator builds don't require the paid team; this checks the regenerated project is structurally sound)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add project.yml Sotto/Sotto.entitlements Sotto.xcodeproj/project.pbxproj
@@ -102,12 +102,12 @@ Closes #5"
 - Consumes: Task 1's commit SHA on `main`.
 - Produces: issue #5 closed with a pointer to the restoring commit.
 
-- [ ] **Step 1: Push main**
+- [x] **Step 1: Push main**
 
 Run: `git push origin main`
 Expected: `main -> main` in output; the `Closes #5` trailer auto-closes the issue on push.
 
-- [ ] **Step 2: Confirm issue state, close manually if the trailer didn't fire**
+- [x] **Step 2: Confirm issue state, close manually if the trailer didn't fire**
 
 Run: `gh issue view 5 --repo maybenotconnor/sotto --json state,stateReason -q .state`
 Expected: `CLOSED`. If it prints `OPEN`, run:
@@ -116,7 +116,7 @@ Expected: `CLOSED`. If it prints `OPEN`, run:
 gh issue close 5 --repo maybenotconnor/sotto --comment "Restored by <SHA of Task 1 commit>: iCloud entitlements are back in project.yml and DEVELOPMENT_TEAM XV3864F3BP is baked into settings.base. Remaining manual steps (Xcode account sign-in, on-device verification) are listed in docs/superpowers/specs/2026-07-11-restore-icloud-entitlements-design.md."
 ```
 
-- [ ] **Step 3: Commit plan checkbox updates**
+- [x] **Step 3: Commit plan checkbox updates**
 
 ```bash
 git add docs/superpowers/plans/2026-07-11-restore-icloud-entitlements.md
