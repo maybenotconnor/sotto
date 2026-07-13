@@ -58,6 +58,14 @@ struct ConversationDetailView: View {
     private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // The navigation-bar title is inline (and doubles as the rename field), so it
+                // truncates long titles with no way to read them in full. This body header is
+                // the untruncated surface: it wraps to as many lines as needed and tracks
+                // renames via `savedTitle`.
+                Text(displayTitle)
+                    .font(.title2.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
                 metadataRow
                 if audioExists { playerControls }
                 transcriptBody
@@ -65,6 +73,15 @@ struct ConversationDetailView: View {
             .padding()
         }
         .toolbar { toolbarContent }
+    }
+
+    /// Full, untruncated title for the body header. `savedTitle` is seeded in `.task` and
+    /// updated on rename; before that first write it is empty, so fall back to the same
+    /// title-or-time value the navigation title uses.
+    private var displayTitle: String {
+        savedTitle.isEmpty
+            ? (entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
+            : savedTitle
     }
 
     /// Commit rule (spec): persist only a non-empty value that differs from what was

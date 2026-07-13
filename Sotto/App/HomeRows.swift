@@ -51,7 +51,7 @@ struct SegmentRowView: View {
                 HStack {
                     Text(title)
                         .font(.headline)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer()
                     Image(systemName: entry.backend == "deepgram" ? "cloud" : "iphone")
                         .foregroundStyle(.secondary)
