@@ -11,9 +11,9 @@ struct ConversationDetailView: View {
     @State private var player = AudioPlayerController()
     @State private var audioExists = false
     @State private var confirmDelete = false
-    // Rename (2026-07-07 spec): nav-title binding + last-persisted value. `savedTitle`
-    // is what commit no-ops and reverts compare against — it starts as the same
-    // title-or-time fallback the static navigationTitle used to show.
+    // Rename (2026-07-07 spec): the editable hero-title binding + last-persisted value.
+    // `savedTitle` is what commit no-ops and reverts compare against — it starts as the same
+    // title-or-time fallback the title field first displays.
     @State private var editableTitle = ""
     @State private var savedTitle = ""
     @Environment(\.dismiss) private var dismiss
@@ -22,53 +22,46 @@ struct ConversationDetailView: View {
     private var mdURL: URL { dayDirectory.appendingPathComponent("\(entry.id).md") }
 
     var body: some View {
-        Group {
-            if transcript != nil {
-                mainContent
-                    .navigationTitle($editableTitle)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .onChange(of: editableTitle) { _, newValue in
-                        commitRename(newValue)
+        // The title is shown and edited in one place — the hero TextField in `mainContent`
+        // (there is no nav-bar title), so the transcript-present/absent branches that only
+        // differed by their navigation title collapse into a single content view.
+        mainContent
+            .task {
+                transcript = TranscriptFile.parse(url: mdURL)
+                savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
+                editableTitle = savedTitle
+                // hasAudio is advisory (M5 review): stat the file before offering playback.
+                audioExists = FileManager.default.fileExists(atPath: m4aURL.path)
+                if audioExists { player.load(url: m4aURL) }
+            }
+            // Commit on change; `commitRename` no-ops when the value is unchanged (including the
+            // `.task` seed above), so this only writes on a real rename.
+            .onChange(of: editableTitle) { _, newValue in
+                commitRename(newValue)
+            }
+            .onDisappear { player.stop() }
+            .alert("Delete this conversation?", isPresented: $confirmDelete) {
+                Button("Delete", role: .destructive) {
+                    Task {
+                        await model.deleteSegment(m4aURL: m4aURL)
+                        dismiss()
                     }
-            } else {
-                mainContent
-                    .navigationTitle(
-                        entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
-            }
-        }
-        .task {
-            transcript = TranscriptFile.parse(url: mdURL)
-            savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
-            editableTitle = savedTitle
-            // hasAudio is advisory (M5 review): stat the file before offering playback.
-            audioExists = FileManager.default.fileExists(atPath: m4aURL.path)
-            if audioExists { player.load(url: m4aURL) }
-        }
-        .onDisappear { player.stop() }
-        .alert("Delete this conversation?", isPresented: $confirmDelete) {
-            Button("Delete", role: .destructive) {
-                Task {
-                    await model.deleteSegment(m4aURL: m4aURL)
-                    dismiss()
                 }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Deletes the audio and transcript permanently.")
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Deletes the audio and transcript permanently.")
-        }
     }
 
     private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // The navigation-bar title is inline (and doubles as the rename field), so it
-                // truncates long titles with no way to read them in full. This body header is
-                // the untruncated surface: it wraps to as many lines as needed and tracks
-                // renames via `savedTitle`.
-                Text(displayTitle)
+                // The one and only title surface: an editable, multi-line hero title. Long
+                // auto-generated titles wrap and are fully visible, and tapping it renames the
+                // conversation (there is no nav-bar title). Binds to `editableTitle` (seeded in
+                // `.task`); commits via `commitRename` on the body's `.onChange`.
+                TextField("Title", text: $editableTitle, axis: .vertical)
                     .font(.title2.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
                 metadataRow
                 if audioExists { playerControls }
                 transcriptBody
@@ -76,15 +69,6 @@ struct ConversationDetailView: View {
             .padding()
         }
         .toolbar { toolbarContent }
-    }
-
-    /// Full, untruncated title for the body header. `savedTitle` is seeded in `.task` and
-    /// updated on rename; before that first write it is empty, so fall back to the same
-    /// title-or-time value the navigation title uses.
-    private var displayTitle: String {
-        savedTitle.isEmpty
-            ? (entry.title ?? entry.startTime.formatted(.dateTime.hour().minute()))
-            : savedTitle
     }
 
     /// Commit rule (spec): persist only a non-empty value that differs from what was
