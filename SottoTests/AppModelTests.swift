@@ -92,6 +92,56 @@ struct AppModelTests {
         #expect(!model.hasMoreHistory)
     }
 
+    /// Scroll-position regression: returning from a transcript detail must NOT re-run
+    /// loadInitialHistory. That call resets paging to the first page, collapsing the list under
+    /// the preserved scroll offset (the user lands near the top). This pins the contract the
+    /// view-layer fix relies on: hasLoadedHistoryOnce flips true after the first load (so the
+    /// reappearing `.task` can skip the reload), refreshLoadedHistory preserves the paged-out
+    /// window, and only loadInitialHistory resets it.
+    @Test func reappearRefreshPreservesPagedHistoryWhereReloadResets() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ScrollTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let store = DayIndexStore(rootDirectory: root)
+        // Yesterday back through -10: 10 content days, none of them "today", so
+        // refreshLoadedHistory's separate "prepend today" branch stays out of the count.
+        // Anchor to a single `now` so a midnight rollover mid-loop can't collapse two offsets
+        // onto the same day folder (which would leave 9 content days and fail the counts).
+        let now = Date()
+        for offset in 1...10 {
+            let day = Calendar.current.date(byAdding: .day, value: -offset, to: now)!
+            let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            await store.recordQueuedSegment(
+                m4aURL: dir.appendingPathComponent("10-00-00.m4a"), startTime: day, duration: 60)
+        }
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+
+        #expect(!model.hasLoadedHistoryOnce)
+        await model.loadInitialHistory()
+        #expect(model.hasLoadedHistoryOnce)         // the flag the reappearing .task guards on
+        #expect(model.historySections.count == 7)
+
+        await model.loadMoreHistory()               // user scrolls down: page in the rest
+        #expect(model.historySections.count == 10)
+
+        // Reappearing from a detail push runs refreshLoadedHistory (the id-task) — it must keep
+        // every paged-in section so the scroll offset survives.
+        await model.refreshLoadedHistory()
+        #expect(model.historySections.count == 10)
+
+        // Re-running the initial load (the old, buggy reappear behavior) collapses the list back
+        // to the first page — exactly what dropped the scroll position.
+        await model.loadInitialHistory()
+        #expect(model.historySections.count == 7)
+    }
+
     /// M9 review Important #2: deleting a day's only segment must drop that day's section
     /// entirely on the resulting `refreshLoadedHistory()` — otherwise its now-content-less
     /// sticky header keeps showing until the next full reload.

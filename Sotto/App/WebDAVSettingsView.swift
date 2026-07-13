@@ -150,8 +150,9 @@ struct WebDAVSettingsView: View {
     private var forgetSection: some View {
         Section {
             Button("Forget this server", role: .destructive) { showForgetConfirm = true }
-                .confirmationDialog("Forget this server?", isPresented: $showForgetConfirm) {
+                .alert("Forget this server?", isPresented: $showForgetConfirm) {
                     Button("Forget", role: .destructive) { forget() }
+                    Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("Removes the server settings and app password from this device. Files already on the server are not touched.")
                 }
