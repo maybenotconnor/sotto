@@ -155,7 +155,16 @@ private struct HomeScreen: View {
         .listStyle(.plain)
         .environment(\.editMode, $editMode)
         .refreshable { await model.loadInitialHistory() }
-        .task { await model.loadInitialHistory() }
+        .task {
+            // `.task` re-fires every time this view reappears — including popping back from a
+            // detail push. Re-running the initial load there resets paging to the first page,
+            // dropping every load-more page and, with them, the user's scroll position (the
+            // list collapses under the preserved offset, landing near the top). Run the full
+            // load on first appearance only; the id-task below keeps loaded sections fresh on
+            // later appearances without resetting paging.
+            guard !model.hasLoadedHistoryOnce else { return }
+            await model.loadInitialHistory()
+        }
         .task(id: pipeline.finalizedCount) { await model.refreshLoadedHistory() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
