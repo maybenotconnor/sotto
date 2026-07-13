@@ -127,7 +127,12 @@ struct ConversationDetailView: View {
                 in: 0...max(player.duration, 1))
             HStack(spacing: 24) {
                 Button { player.skip(-15) } label: { Image(systemName: "gobackward.15") }
-                Button { player.togglePlay() } label: {
+                Button {
+                    let pipeline = model.pipeline
+                    player.togglePlay(
+                        phoneMicCapturing: pipeline?.activeSourceType == .phoneMic,
+                        pipelineActive: pipeline.map { $0.status != .idle } ?? false)
+                } label: {
                     Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.largeTitle)
                 }
