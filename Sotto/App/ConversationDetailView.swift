@@ -45,13 +45,16 @@ struct ConversationDetailView: View {
             if audioExists { player.load(url: m4aURL) }
         }
         .onDisappear { player.stop() }
-        .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete) {
+        .alert("Delete this conversation?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) {
                 Task {
                     await model.deleteSegment(m4aURL: m4aURL)
                     dismiss()
                 }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deletes the audio and transcript permanently.")
         }
     }
 

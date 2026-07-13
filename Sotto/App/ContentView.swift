@@ -197,7 +197,7 @@ private struct HomeScreen: View {
                 .background(.bar)
             }
         }
-        .confirmationDialog(
+        .alert(
             "Delete this conversation?", isPresented: .init(
                 get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
         ) {
@@ -211,10 +211,11 @@ private struct HomeScreen: View {
                     }
                 }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Deletes the audio and transcript permanently.")
         }
-        .confirmationDialog(
+        .alert(
             "Merge \(mergeCount) conversations into one?",
             isPresented: $confirmingMerge
         ) {
@@ -234,6 +235,7 @@ private struct HomeScreen: View {
                     }
                 }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("The originals are replaced. This can't be undone.")
         }

@@ -126,8 +126,9 @@ struct SettingsView: View {
                     Text(failure).font(.caption).foregroundStyle(.red)
                 }
                 Button("Forget This Device", role: .destructive) { showForgetConfirm = true }
-                    .confirmationDialog("Forget \(name)?", isPresented: $showForgetConfirm) {
+                    .alert("Forget \(name)?", isPresented: $showForgetConfirm) {
                         Button("Forget", role: .destructive) { Task { await model.forgetDevice() } }
+                        Button("Cancel", role: .cancel) {}
                     } message: {
                         Text("Sotto will stop connecting to it and use the iPhone microphone.")
                     }
@@ -273,8 +274,8 @@ struct SettingsView: View {
             // (the toggle, non-destructive) can never be confused with "delete my backup".
             if iCloudHasBackups {
                 Button("Remove iCloud backup", role: .destructive) { showRemoveBackupConfirm = true }
-                    .confirmationDialog("Remove all transcripts from iCloud?",
-                                        isPresented: $showRemoveBackupConfirm) {
+                    .alert("Remove all transcripts from iCloud?",
+                           isPresented: $showRemoveBackupConfirm) {
                         Button("Remove", role: .destructive) {
                             Task {
                                 await model.removeICloudBackup()
@@ -282,6 +283,7 @@ struct SettingsView: View {
                                 backupResult = "Removed iCloud backup."
                             }
                         }
+                        Button("Cancel", role: .cancel) {}
                     } message: {
                         Text("This deletes your backed-up transcripts from iCloud. Transcripts on this device are not affected.")
                     }
