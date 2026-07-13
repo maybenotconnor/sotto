@@ -166,6 +166,11 @@ struct ConversationDetailView: View {
             }
         default:
             if let transcript {
+                // Native whole-block copy for the read-only transcript. On iOS `.textSelection`
+                // enables long-press → Copy of an entire `Text` (iOS has no in-place range
+                // selection — that is macOS-only); applied to the container so both the Summary
+                // and the body are copyable. Interactive controls (player, title field) are
+                // unaffected — the modifier only touches `Text`/`Label`.
                 VStack(alignment: .leading, spacing: 16) {
                     if let summary = transcript.summary {
                         GroupBox("Summary") {
@@ -173,12 +178,13 @@ struct ConversationDetailView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    // Deepgram speaker turns arrive as markdown bold; render as styled text.
+                    // Deepgram speaker turns arrive as markdown bold; `transcriptBodyAttributed`
+                    // renders them via the native `AttributedString(markdown:)` API. Uses
                     // `transcriptBody` (never the raw `body`) so the `## Summary`/`## Transcript`
                     // section markers (M8 meeting notes) never appear as literal text.
-                    Text(LocalizedStringKey(transcript.transcriptBody))
-                        .textSelection(.enabled)
+                    Text(transcript.transcriptBodyAttributed)
                 }
+                .textSelection(.enabled)
             } else {
                 Text("Transcript unavailable.").foregroundStyle(.secondary)
             }

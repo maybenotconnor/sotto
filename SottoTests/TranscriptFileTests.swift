@@ -85,4 +85,37 @@ struct TranscriptFileTests {
         #expect(file.summary == nil)
         #expect(file.transcriptBody == file.body)
     }
+
+    @Test func transcriptBodyRendersInlineMarkdownNatively() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TFTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("t.md")
+        try """
+        ---
+        date: 2026-03-14T09:15:30-04:00
+        backend: deepgram
+        ---
+
+        ## Transcript
+
+        **Alice:** Hello there.
+        **Bob:** Hi Alice.
+        """.write(to: url, atomically: true, encoding: .utf8)
+
+        let file = try #require(TranscriptFile.parse(url: url))
+        let attributed = file.transcriptBodyAttributed
+        let plain = String(attributed.characters)
+
+        // Markdown emphasis is consumed into styling, never shown literally as `**`.
+        #expect(plain.contains("Alice: Hello there."))
+        #expect(plain.contains("Bob: Hi Alice."))
+        #expect(!plain.contains("**"))
+        // The bold speaker labels produce a strong-emphasis run (native markdown styling).
+        #expect(attributed.runs.contains {
+            $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+        })
+        // `.inlineOnlyPreservingWhitespace` keeps the line break between the two turns.
+        #expect(plain.contains("\n"))
+    }
 }

@@ -61,6 +61,22 @@ struct TranscriptFile {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// `transcriptBody` parsed as inline markdown for display — Deepgram's `**speaker**` turns
+    /// become bold runs, whitespace and newlines are preserved. Uses the first-party
+    /// `AttributedString(markdown:)` API with the same `.inlineOnlyPreservingWhitespace`
+    /// semantics SwiftUI applies to `Text(_: LocalizedStringKey)`, so it renders identically
+    /// without pressing `LocalizedStringKey` into service as a runtime markdown parser. Parsing
+    /// returns the partially-parsed result rather than throwing, so malformed markdown still
+    /// shows readable text.
+    var transcriptBodyAttributed: AttributedString {
+        let source = transcriptBody
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            failurePolicy: .returnPartiallyParsedIfPossible)
+        return (try? AttributedString(markdown: source, options: options))
+            ?? AttributedString(source)
+    }
+
     /// List/Detail preview snippet: prefers the `## Summary` section (M8 meeting notes) when
     /// present; otherwise the `transcriptBody` with its `# Conversation — …` heading line
     /// dropped. Whitespace collapsed to single spaces, capped at ~160 characters.
