@@ -16,6 +16,9 @@ struct ConversationDetailView: View {
     // title-or-time fallback the title field first displays.
     @State private var editableTitle = ""
     @State private var savedTitle = ""
+    /// Drives the title field's keyboard: set false to end editing (Return, the keyboard "Done"
+    /// button, and interactive scroll all clear it).
+    @FocusState private var titleEditing: Bool
     @Environment(\.dismiss) private var dismiss
 
     private var m4aURL: URL { dayDirectory.appendingPathComponent("\(entry.id).m4a") }
@@ -35,9 +38,21 @@ struct ConversationDetailView: View {
                 if audioExists { player.load(url: m4aURL) }
             }
             // Commit on change; `commitRename` no-ops when the value is unchanged (including the
-            // `.task` seed above), so this only writes on a real rename.
+            // `.task` seed above), so this only writes on a real rename. A newline means the user
+            // pressed Return in the wrapping field — titles are single-line, so treat it as
+            // "done": strip the newline(s), dismiss the keyboard, and commit the cleaned value.
             .onChange(of: editableTitle) { _, newValue in
-                commitRename(newValue)
+                if newValue.contains(where: \.isNewline) {
+                    // Join across newlines with a space so a pasted multi-line string stays
+                    // readable ("line1 line2"), not concatenated; a lone trailing Return just
+                    // yields the text back.
+                    let cleaned = newValue.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    if cleaned != editableTitle { editableTitle = cleaned }
+                    titleEditing = false
+                    commitRename(cleaned)
+                } else {
+                    commitRename(newValue)
+                }
             }
             .onDisappear { player.stop() }
             .alert("Delete this conversation?", isPresented: $confirmDelete) {
@@ -56,18 +71,21 @@ struct ConversationDetailView: View {
     private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // The one and only title surface: an editable, multi-line hero title. Long
-                // auto-generated titles wrap and are fully visible, and tapping it renames the
-                // conversation (there is no nav-bar title). Binds to `editableTitle` (seeded in
-                // `.task`); commits via `commitRename` on the body's `.onChange`.
+                // The one and only title surface: an editable, wrapping hero title. Long
+                // auto-generated titles wrap and stay fully visible, and tapping it renames the
+                // conversation (there is no nav-bar title). It stays multi-line for *layout* only
+                // — newlines are neutralized in the body's `.onChange`, so a saved title is always
+                // one line. Binds to `editableTitle` (seeded in `.task`); commits via `commitRename`.
                 TextField("Title", text: $editableTitle, axis: .vertical)
                     .font(.title2.weight(.semibold))
+                    .focused($titleEditing)
                 metadataRow
                 if audioExists { playerControls }
                 transcriptBody
             }
             .padding()
         }
+        .scrollDismissesKeyboard(.interactively)
         .toolbar { toolbarContent }
     }
 
@@ -169,25 +187,30 @@ struct ConversationDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // Keep this to a SINGLE trailing item. With the inline, editable navigation title
-        // (transcript-present branch) the title claims the middle of the bar, so a two-item
-        // group (share + menu) no longer fit and iOS collapsed them into its own "•••"
-        // overflow button — which then opened to reveal *our* ellipsis menu, i.e. the
-        // "tap the three dots twice" bug. One item can't overflow, so Share moves inside.
+        // Single trailing slot: a "Done" button while the title field is focused (ends editing /
+        // dismisses the keyboard), otherwise the ellipsis actions menu. The Done affordance lives
+        // in the nav bar rather than a `.keyboard`-placement toolbar because iOS 26 renders those
+        // as an ugly detached floating bar. Return and interactive scroll also end editing.
+        // (Keep this a SINGLE trailing item — historically a second one collapsed into iOS's own
+        // "•••" overflow, revealing our ellipsis behind a second tap.)
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                ShareLink(item: mdURL) { Label("Share", systemImage: "square.and.arrow.up") }
-                Button("Copy text") {
-                    UIPasteboard.general.string = transcript?.body ?? ""
-                }
-                if audioExists {
-                    Button("Re-transcribe with current backend") {
-                        Task { await model.retranscribe(m4aURL: m4aURL) }
+            if titleEditing {
+                Button("Done") { titleEditing = false }
+            } else {
+                Menu {
+                    ShareLink(item: mdURL) { Label("Share", systemImage: "square.and.arrow.up") }
+                    Button("Copy text") {
+                        UIPasteboard.general.string = transcript?.body ?? ""
                     }
+                    if audioExists {
+                        Button("Re-transcribe with current backend") {
+                            Task { await model.retranscribe(m4aURL: m4aURL) }
+                        }
+                    }
+                    Button("Delete", role: .destructive) { confirmDelete = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                Button("Delete", role: .destructive) { confirmDelete = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
             }
         }
     }
