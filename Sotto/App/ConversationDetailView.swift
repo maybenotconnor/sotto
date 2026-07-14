@@ -37,24 +37,31 @@ struct ConversationDetailView: View {
                 audioExists = FileManager.default.fileExists(atPath: m4aURL.path)
                 if audioExists { player.load(url: m4aURL) }
             }
-            // Commit on change; `commitRename` no-ops when the value is unchanged (including the
-            // `.task` seed above), so this only writes on a real rename. A newline means the user
-            // pressed Return in the wrapping field — titles are single-line, so treat it as
-            // "done": strip the newline(s), dismiss the keyboard, and commit the cleaned value.
+            // Titles are single-line, so a newline means the user pressed Return in the wrapping
+            // field: strip the newline(s) and end editing. We deliberately do NOT commit here —
+            // committing on every keystroke reverts a transiently-empty field (you could never
+            // delete the last character) and rewrites the file per key. The commit happens once,
+            // when editing ends, in the `titleEditing` handler below.
             .onChange(of: editableTitle) { _, newValue in
-                if newValue.contains(where: \.isNewline) {
-                    // Join across newlines with a space so a pasted multi-line string stays
-                    // readable ("line1 line2"), not concatenated; a lone trailing Return just
-                    // yields the text back.
-                    let cleaned = newValue.split(whereSeparator: \.isNewline).joined(separator: " ")
-                    if cleaned != editableTitle { editableTitle = cleaned }
-                    titleEditing = false
-                    commitRename(cleaned)
-                } else {
-                    commitRename(newValue)
-                }
+                guard newValue.contains(where: \.isNewline) else { return }
+                // Join across newlines with a space so a pasted multi-line string stays readable
+                // ("line1 line2"), not concatenated; a lone trailing Return just yields the text back.
+                let cleaned = newValue.split(whereSeparator: \.isNewline).joined(separator: " ")
+                editableTitle = cleaned
+                titleEditing = false
             }
-            .onDisappear { player.stop() }
+            // Commit when editing ends (Return, the "Done" button, and interactive scroll all clear
+            // the focus). An empty field is a legitimate state *while* typing; only now do we
+            // enforce the non-empty rule — a blank title reverts to the last saved value.
+            .onChange(of: titleEditing) { _, editing in
+                if !editing { commitRename(editableTitle) }
+            }
+            // Safety net: if the view is dismissed while the keyboard is still up (swipe-back
+            // mid-edit), persist the final value. `commitRename` no-ops when it is unchanged.
+            .onDisappear {
+                commitRename(editableTitle)
+                player.stop()
+            }
             .alert("Delete this conversation?", isPresented: $confirmDelete) {
                 Button("Delete", role: .destructive) {
                     Task {
@@ -89,10 +96,10 @@ struct ConversationDetailView: View {
         .toolbar { toolbarContent }
     }
 
-    /// Commit rule (spec): persist only a non-empty value that differs from what was
-    /// displayed. Unchanged commits (including the seeding write in `.task`) and inputs
-    /// that trim/sanitize to empty revert silently — this also keeps the time placeholder
-    /// from being persisted as a literal title.
+    /// Commit rule (spec): called once when editing ends. Persist only a non-empty value that
+    /// differs from the last saved one; an unchanged value no-ops and a value that trims/
+    /// sanitizes to empty reverts the field to `savedTitle` — this also keeps the time
+    /// placeholder from being persisted as a literal title.
     private func commitRename(_ newValue: String) {
         let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != savedTitle else { return }
