@@ -145,24 +145,9 @@ enum ConversationMerger {
         let headingTime = timeFormatter.string(from: startTime)
         lines.append("# \(sanitizedTitle ?? "Conversation") — \(headingTime)")
         lines.append("")
-        let hasNotesBody = sanitizedSummary != nil || sanitizedActionItems?.isEmpty == false
-        if hasNotesBody {
-            lines.append("## Summary")
-            lines.append("")
-            if let sanitizedSummary {
-                lines.append(sanitizedSummary)
-                lines.append("")
-            }
-            if let sanitizedActionItems, !sanitizedActionItems.isEmpty {
-                lines.append("Action items:")
-                for item in sanitizedActionItems {
-                    lines.append("- \(item)")
-                }
-                lines.append("")
-            }
-            lines.append("## Transcript")
-            lines.append("")
-        }
+        lines.append(contentsOf: TranscriptMarkdownWriter.summarySection(
+            summary: sanitizedSummary, actionItems: sanitizedActionItems,
+            truncated: notes.truncated))
         // partBody, not file.transcriptBody: a pre-notes-shape merged file still carries
         // its H1 inside transcriptBody, and the H1 is re-emitted above with the title.
         lines.append(partBody(file))

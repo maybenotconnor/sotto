@@ -362,6 +362,27 @@ struct ConversationMergerTests {
             .contains("# Planning the launch — \(started)"))
     }
 
+    @Test func applyNotesRendersExcerptDisclaimerWhenTruncated() async throws {
+        let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
+        let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
+        _ = try await ConversationMerger.merge(dayDirectory: dir, entries: entries)
+        let mdURL = dir.appendingPathComponent("09-15-30.md")
+
+        let ok = ConversationMerger.applyNotes(
+            to: mdURL,
+            notes: PostProcessingResult(
+                title: "Planning the launch", summary: "We planned the launch.",
+                actionItems: ["Ship it"], custom: nil, truncated: true),
+            startTime: entries[0].startTime)
+
+        #expect(ok)
+        let file = try #require(TranscriptFile.parse(url: mdURL))
+        #expect(file.summary?.contains("Important information may have been omitted") == true)
+        // Transcript body — gap marker included — still preserved verbatim.
+        #expect(file.transcriptBody.contains("First part text one two three."))
+        #expect(file.transcriptBody.contains("Second part text four five."))
+    }
+
     @Test func applyNotesSanitizesModelOutput() async throws {
         let dir = try makeDay([("09-15-30", Self.partOne), ("10-01-00", Self.partTwo)])
         let entries = DayIndexRebuilder.rebuild(dayDirectory: dir).segments
