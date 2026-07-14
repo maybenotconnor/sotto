@@ -7,6 +7,10 @@ struct PostProcessingResult: Codable, Sendable, Equatable {
     let summary: String?
     let actionItems: [String]?
     let custom: [String: String]?
+    /// True when the transcript was too long to send whole and only head+tail excerpts were
+    /// summarized. Drives the "based on excerpts" disclaimer in the written notes. Last
+    /// property + default keeps the synthesized memberwise init backward-compatible.
+    var truncated: Bool = false
 }
 
 enum PostProcessingError: Error {

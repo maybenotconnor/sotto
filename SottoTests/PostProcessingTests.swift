@@ -42,4 +42,32 @@ struct PostProcessingTests {
             || corpus.contains("beta") || corpus.contains("testflight")
             || corpus.contains("compliance") || corpus.contains("ship"))
     }
+
+    @Test func shortTranscriptIsSentWholeWithoutTruncation() {
+        let text = String(repeating: "word ", count: 100)   // ~500 chars, well under 10k
+        let (excerpt, truncated) = FoundationModelsPostProcessor.promptExcerpt(for: text)
+        #expect(excerpt == text)
+        #expect(truncated == false)
+    }
+
+    @Test func longTranscriptIsExcerptedHeadAndTailWithMarker() {
+        let head = String(repeating: "A", count: 5_000)
+        let middle = String(repeating: "B", count: 20_000)
+        let tail = String(repeating: "C", count: 5_000)
+        let (excerpt, truncated) = FoundationModelsPostProcessor.promptExcerpt(for: head + middle + tail)
+        #expect(truncated == true)
+        #expect(excerpt.hasPrefix(head))                 // opening 5k preserved
+        #expect(excerpt.hasSuffix(tail))                 // closing 5k preserved
+        #expect(!excerpt.contains("B"))                  // entire middle dropped
+        #expect(excerpt.contains("[... middle of the conversation omitted ...]"))
+        // Marker appears exactly once.
+        #expect(excerpt.components(separatedBy: "[... middle of the conversation omitted ...]").count == 2)
+    }
+
+    @Test func excerptBoundaryAtExactlyHeadPlusTailIsNotTruncated() {
+        let text = String(repeating: "x", count: 10_000)   // == head + tail, so NOT > threshold
+        let (excerpt, truncated) = FoundationModelsPostProcessor.promptExcerpt(for: text)
+        #expect(truncated == false)
+        #expect(excerpt == text)
+    }
 }
