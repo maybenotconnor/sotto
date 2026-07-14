@@ -8,6 +8,10 @@ struct ConversationDetailView: View {
     let dayDirectory: URL
 
     @State private var transcript: TranscriptFile?
+    // The transcript body pre-split into render blocks (see `TranscriptFile.transcriptBlocks`).
+    // Computed once in `.task` — not inline in `body` — so an unrelated re-render (e.g. the
+    // player slider ticking) never re-splits the whole document.
+    @State private var blocks: [TranscriptFile.TranscriptBlock] = []
     @State private var player = AudioPlayerController()
     @State private var audioExists = false
     @State private var confirmDelete = false
@@ -30,7 +34,11 @@ struct ConversationDetailView: View {
         // differed by their navigation title collapse into a single content view.
         mainContent
             .task {
-                transcript = TranscriptFile.parse(url: mdURL)
+                let parsed = TranscriptFile.parse(url: mdURL)
+                transcript = parsed
+                // Split into blocks up front (cheap string work) so the render path only ever
+                // markdown-parses the handful of blocks the LazyVStack materializes on screen.
+                blocks = parsed?.transcriptBlocks ?? []
                 savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
                 editableTitle = savedTitle
                 // hasAudio is advisory (M5 review): stat the file before offering playback.
@@ -185,11 +193,19 @@ struct ConversationDetailView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    // Deepgram speaker turns arrive as markdown bold; `transcriptBodyAttributed`
-                    // renders them via the native `AttributedString(markdown:)` API. Uses
-                    // `transcriptBody` (never the raw `body`) so the `## Summary`/`## Transcript`
-                    // section markers (M8 meeting notes) never appear as literal text.
-                    Text(transcript.transcriptBodyAttributed)
+                    // One `Text` per block inside a `LazyVStack`, not a single `Text` over the
+                    // whole body: rendering the entire document as one `Text` exceeds CoreText's
+                    // layout ceiling (it reports a size but draws blank) and forces a synchronous
+                    // full-document markdown parse on open. The LazyVStack builds and parses only
+                    // the blocks near the viewport, so open is instant and no block can blank out.
+                    // Blocks derive from `transcriptBody` (never the raw `body`) so the `## Summary`
+                    // / `## Transcript` markers (M8 meeting notes) never appear as literal text.
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(blocks) { block in
+                            Text(TranscriptFile.attributed(block.text))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
                 }
                 .textSelection(.enabled)
             } else {

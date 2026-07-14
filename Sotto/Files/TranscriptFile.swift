@@ -65,16 +65,73 @@ struct TranscriptFile {
     /// become bold runs, whitespace and newlines are preserved. Uses the first-party
     /// `AttributedString(markdown:)` API with the same `.inlineOnlyPreservingWhitespace`
     /// semantics SwiftUI applies to `Text(_: LocalizedStringKey)`, so it renders identically
-    /// without pressing `LocalizedStringKey` into service as a runtime markdown parser. Parsing
-    /// returns the partially-parsed result rather than throwing, so malformed markdown still
-    /// shows readable text.
-    var transcriptBodyAttributed: AttributedString {
-        let source = transcriptBody
+    /// without pressing `LocalizedStringKey` into service as a runtime markdown parser.
+    var transcriptBodyAttributed: AttributedString { Self.attributed(transcriptBody) }
+
+    /// Inline-markdown parse of a single string. Shared by `transcriptBodyAttributed` and the
+    /// per-block rendering path (`transcriptBlocks`). Parsing returns the partially-parsed
+    /// result rather than throwing, so malformed markdown still shows readable text.
+    static func attributed(_ markdown: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible)
-        return (try? AttributedString(markdown: source, options: options))
-            ?? AttributedString(source)
+        return (try? AttributedString(markdown: markdown, options: options))
+            ?? AttributedString(markdown)
+    }
+
+    /// One render unit of the transcript body. A single `Text` over the whole document blanks
+    /// out past CoreText's single-layout ceiling and forces a synchronous full-document
+    /// markdown parse on open; splitting into blocks lets a `LazyVStack` parse and lay out only
+    /// the turns near the viewport. Ids are the block's position, stable for `ForEach` identity.
+    struct TranscriptBlock: Identifiable {
+        let id: Int
+        let text: String
+    }
+
+    /// Upper bound on a block's character count. Comfortably under the single-`Text` ceiling
+    /// while small enough that each block parses in well under a frame — Deepgram turns fall
+    /// far below it, so only an on-device one-paragraph body is ever sub-split.
+    static let maxBlockCharacters = 2_000
+
+    /// The `transcriptBody` split into `LazyVStack` render blocks. Deepgram turns are already
+    /// blank-line-separated paragraphs (one block each); an on-device transcript is one long
+    /// paragraph, so any paragraph over `maxBlockCharacters` is wrapped at word boundaries so
+    /// no block approaches the single-`Text` layout ceiling.
+    var transcriptBlocks: [TranscriptBlock] {
+        var blocks: [TranscriptBlock] = []
+        for paragraph in Self.paragraphs(of: transcriptBody) {
+            for piece in Self.wrap(paragraph, cap: Self.maxBlockCharacters) where !piece.isEmpty {
+                blocks.append(TranscriptBlock(id: blocks.count, text: piece))
+            }
+        }
+        return blocks
+    }
+
+    /// Split a body into paragraphs on blank-line runs, preserving single newlines within a
+    /// paragraph. Empty (whitespace-only) lines are separators and never become their own block.
+    private static func paragraphs(of body: String) -> [String] {
+        body.components(separatedBy: "\n")
+            .split(whereSeparator: { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+            .map { $0.joined(separator: "\n") }
+    }
+
+    /// Wrap one paragraph into pieces no longer than `cap`, breaking at the last whitespace
+    /// at/under the cap so words stay intact (a single word longer than `cap` is hard-cut).
+    /// The whitespace at each break is consumed — no words are dropped or reordered.
+    private static func wrap(_ paragraph: String, cap: Int) -> [String] {
+        guard paragraph.count > cap else { return [paragraph] }
+        var pieces: [String] = []
+        var remaining = Substring(paragraph)
+        while remaining.count > cap {
+            let hardIndex = remaining.index(remaining.startIndex, offsetBy: cap)
+            let whitespaceBreak = remaining[..<hardIndex].lastIndex(where: \.isWhitespace)
+            let breakIndex = whitespaceBreak.flatMap { $0 > remaining.startIndex ? $0 : nil } ?? hardIndex
+            pieces.append(remaining[..<breakIndex].trimmingCharacters(in: .whitespaces))
+            remaining = remaining[breakIndex...].drop(while: \.isWhitespace)
+        }
+        let tail = remaining.trimmingCharacters(in: .whitespaces)
+        if !tail.isEmpty { pieces.append(tail) }
+        return pieces
     }
 
     /// List/Detail preview snippet: prefers the `## Summary` section (M8 meeting notes) when
