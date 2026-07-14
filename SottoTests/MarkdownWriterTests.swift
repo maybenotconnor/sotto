@@ -97,4 +97,32 @@ struct MarkdownWriterTests {
         #expect(file.transcriptBody.contains(
             "This is the real transcript content that must remain visible."))
     }
+
+    @Test func truncatedNotesRenderExcerptDisclaimer() throws {
+        let dir = tempDir()
+        let result = TranscriptionResult(
+            text: "We synced on the rollout.", segments: [], duration: 60, backend: .speechAnalyzer)
+        let notes = PostProcessingResult(
+            title: "Rollout sync", summary: "Quick status sync.",
+            actionItems: ["File compliance"], custom: nil, truncated: true)
+        let url = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: job(in: dir))
+        let md = try String(contentsOf: url, encoding: .utf8)
+        #expect(md.contains("based on excerpts of the transcript"))
+        // Disclaimer lives inside the Summary section, before the Transcript heading.
+        let disc = try #require(md.range(of: "based on excerpts of the transcript"))
+        let transcript = try #require(md.range(of: "## Transcript"))
+        #expect(disc.lowerBound < transcript.lowerBound)
+    }
+
+    @Test func completeNotesHaveNoDisclaimer() throws {
+        let dir = tempDir()
+        let result = TranscriptionResult(
+            text: "We synced on the rollout.", segments: [], duration: 60, backend: .speechAnalyzer)
+        let notes = PostProcessingResult(
+            title: "Rollout sync", summary: "Quick status sync.",
+            actionItems: ["File compliance"], custom: nil)   // truncated defaults false
+        let url = try TranscriptMarkdownWriter.write(result: result, notes: notes, job: job(in: dir))
+        let md = try String(contentsOf: url, encoding: .utf8)
+        #expect(!md.contains("based on excerpts of the transcript"))
+    }
 }

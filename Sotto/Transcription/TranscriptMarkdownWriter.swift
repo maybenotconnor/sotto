@@ -53,28 +53,12 @@ enum TranscriptMarkdownWriter {
         }
         lines.append("")
 
-        // Byte-compatibility (Task 3 BINDING invariant): with `notes == nil` (or a notes
-        // value with neither summary nor action items), the body below is EXACTLY today's
-        // shape — no "## Transcript" heading inserted — so every pre-M8 markdown/rebuild
-        // test keeps passing unmodified.
-        let hasNotesBody = sanitizedSummary != nil || sanitizedActionItems?.isEmpty == false
-        if hasNotesBody {
-            lines.append("## Summary")
-            lines.append("")
-            if let sanitizedSummary {
-                lines.append(sanitizedSummary)
-                lines.append("")
-            }
-            if let sanitizedActionItems, !sanitizedActionItems.isEmpty {
-                lines.append("Action items:")
-                for item in sanitizedActionItems {
-                    lines.append("- \(item)")
-                }
-                lines.append("")
-            }
-            lines.append("## Transcript")
-            lines.append("")
-        }
+        // Byte-compatibility (BINDING invariant): with no notes body the helper returns [],
+        // so the transcript body below renders in EXACTLY today's shape (no "## Transcript"
+        // heading) and every pre-M8 markdown/rebuild test keeps passing unmodified.
+        lines.append(contentsOf: Self.summarySection(
+            summary: sanitizedSummary, actionItems: sanitizedActionItems,
+            truncated: notes?.truncated ?? false))
 
         if result.backend == .deepgram, !result.segments.isEmpty {
             for segment in result.segments {
@@ -96,6 +80,39 @@ enum TranscriptMarkdownWriter {
             ofItemAtPath: url.path)
 
         return url
+    }
+
+    /// Trusted app text (NOT model output — bypasses the sanitizers) appended to the Summary
+    /// section when the notes were built from head+tail excerpts of a long transcript.
+    static let excerptDisclaimer =
+        "_Summary based on excerpts of the transcript. Important information may have been omitted._"
+
+    /// The `## Summary` … `## Transcript` block, shared by the transcription writer and
+    /// `ConversationMerger.applyNotes`. Inputs are already sanitized. Returns `[]` when there
+    /// is no notes body, so the caller's transcript body renders in the exact pre-notes shape
+    /// (byte-compat invariant). The disclaimer is appended before `## Transcript` when truncated.
+    static func summarySection(summary: String?, actionItems: [String]?, truncated: Bool) -> [String] {
+        let hasNotesBody = summary != nil || actionItems?.isEmpty == false
+        guard hasNotesBody else { return [] }
+        var lines: [String] = ["## Summary", ""]
+        if let summary {
+            lines.append(summary)
+            lines.append("")
+        }
+        if let actionItems, !actionItems.isEmpty {
+            lines.append("Action items:")
+            for item in actionItems {
+                lines.append("- \(item)")
+            }
+            lines.append("")
+        }
+        if truncated {
+            lines.append(excerptDisclaimer)
+            lines.append("")
+        }
+        lines.append("## Transcript")
+        lines.append("")
+        return lines
     }
 
     // model output is untrusted text; never let it alter frontmatter or section structure
