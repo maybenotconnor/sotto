@@ -177,6 +177,97 @@ struct AppModelTests {
         #expect(!FileManager.default.fileExists(atPath: m4aURL.path))
     }
 
+    /// Retry-feedback fix: tapping "Transcription failed — retry" must move the row off
+    /// "failed" immediately. The queue tracks job state privately and its transition handler
+    /// only fires on terminal done/failed — never the intermediate "queued" — so
+    /// `retryTranscription` itself must write the UI-facing "queued" state to the day index
+    /// and refresh loaded history. Without that the row stays "failed" for the whole
+    /// re-transcription and the tap looks like a dead no-op (the reported bug).
+    @Test func retryTranscriptionReflectsQueuedStateInLoadedHistory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RetryFeedbackTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        // Yesterday, so refreshLoadedHistory's separate "prepend today" branch stays out of it.
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let m4aURL = dir.appendingPathComponent("09-15-30.m4a")
+
+        // Seed a segment already in the "failed" state. Deliberately no .m4a on disk: nothing
+        // for the launch salvage sweep to enqueue/drain, so the state stays deterministically
+        // "failed" and the retry exercises only the coordination layer under test.
+        let store = DayIndexStore(rootDirectory: root)
+        await store.recordQueuedSegment(m4aURL: m4aURL, startTime: day, duration: 30)
+        await store.updateSegment(
+            m4aURL: m4aURL, transcriptionState: "failed", backend: nil, wordCount: nil)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()
+        #expect(model.historySections[0].index.segments[0].transcriptionState == "failed")
+
+        await model.retryTranscription(m4aURL: m4aURL)
+
+        // The loaded row must now read "queued" — the immediate "Transcribing…" feedback.
+        #expect(model.historySections[0].index.segments[0].transcriptionState == "queued")
+    }
+
+    /// Same coordination fix as retryTranscription, for the detail view's "Re-transcribe with
+    /// current backend": it must move the row off its stale "done" state (immediate
+    /// "Transcribing…" feedback + reflect the outcome), not silently forward to the queue.
+    /// Without the fix the row stays "done" for the whole re-run and the menu item looks dead.
+    @Test func retranscribeMovesRowOffStaleDoneState() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RetranscribeTests-\(UUID().uuidString)")
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyy-MM-dd"
+        let day = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+        let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let m4aURL = dir.appendingPathComponent("09-15-30.m4a")
+
+        // A finished conversation with no audio on disk: nothing can transcribe back to "done",
+        // so the assertion doesn't hinge on the host's transcription backend — only on the row
+        // leaving "done", which is the coordination behavior under test.
+        let store = DayIndexStore(rootDirectory: root)
+        await store.recordQueuedSegment(m4aURL: m4aURL, startTime: day, duration: 30)
+        await store.updateSegment(
+            m4aURL: m4aURL, transcriptionState: "done", backend: "speechAnalyzer", wordCount: 5)
+
+        let model = AppModel(
+            assetInstaller: FakeAssetInstaller(installed: true), segmentRootOverride: root)
+        await model.ensureSetUp()
+        await model.loadInitialHistory()
+        #expect(model.historySections[0].index.segments[0].transcriptionState == "done")
+
+        await model.retranscribe(m4aURL: m4aURL)
+
+        // The row must no longer read "done" — it now reflects the in-progress/failed re-run.
+        #expect(model.historySections[0].index.segments[0].transcriptionState != "done")
+    }
+
+    /// Gray-highlight fix: HomeRow identity must be globally unique across the flattened
+    /// history List. Segment ids were "s-<HH-mm-ss>" with no day component, so two
+    /// conversations at the same wall-clock time on different days collided to the same
+    /// ForEach identity — and SwiftUI bound transient row state (the gray press/selection
+    /// highlight) to the wrong physical row. Two days sharing a basename must yield distinct ids.
+    @Test func homeRowIdentitiesStayUniqueAcrossDaysSharingABasename() {
+        let entry = DaySegmentEntry(
+            id: "09-15-30", startTime: Date(), duration: 60, backend: "speechAnalyzer",
+            hasAudio: true, wordCount: nil, transcriptionState: "done")
+        let today = DayIndex(date: "2026-07-14", segments: [entry], gaps: [])
+        let yesterday = DayIndex(date: "2026-07-13", segments: [entry], gaps: [])
+        let ids = (HomeRow.rows(for: today, dayID: "2026-07-14")
+            + HomeRow.rows(for: yesterday, dayID: "2026-07-13")).map(\.id)
+        #expect(Set(ids).count == ids.count)   // no cross-day collision
+    }
+
     private func section(day: String, entries: [(id: String, state: String)]) -> AppModel.HistorySection {
         let dayFormatter = DateFormatter()
         dayFormatter.locale = Locale(identifier: "en_US_POSIX")

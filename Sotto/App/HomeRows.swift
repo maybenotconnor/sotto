@@ -2,26 +2,32 @@ import SwiftUI
 
 /// One day's rows: segments + gap markers interleaved, NEWEST FIRST (user decision).
 enum HomeRow: Identifiable {
-    case segment(DaySegmentEntry)
-    case gap(index: Int, DayGapEntry)
+    case segment(dayID: String, DaySegmentEntry)
+    case gap(dayID: String, index: Int, DayGapEntry)
 
+    // Identity must be unique across the whole flattened List, not just within one day. Entry
+    // ids are HH-mm-ss basenames that repeat across day folders, so the day id is part of the
+    // identity — matching the day-namespaced List selection tag in ContentView. Without it, two
+    // same-wall-clock-time conversations on different days shared one ForEach identity and
+    // SwiftUI bound transient row state (the gray press/selection highlight) to the wrong row.
     var id: String {
         switch self {
-        case .segment(let entry): "s-\(entry.id)"
-        case .gap(let index, let gap): "g-\(index)-\(gap.from.timeIntervalSinceReferenceDate)"
+        case .segment(let dayID, let entry): "\(dayID)/s-\(entry.id)"
+        case .gap(let dayID, let index, let gap):
+            "\(dayID)/g-\(index)-\(gap.from.timeIntervalSinceReferenceDate)"
         }
     }
 
     var sortDate: Date {
         switch self {
-        case .segment(let entry): entry.startTime
-        case .gap(_, let gap): gap.from
+        case .segment(_, let entry): entry.startTime
+        case .gap(_, _, let gap): gap.from
         }
     }
 
-    static func rows(for index: DayIndex) -> [HomeRow] {
-        (index.segments.map(HomeRow.segment)
-            + index.gaps.enumerated().map { HomeRow.gap(index: $0.offset, $0.element) })
+    static func rows(for index: DayIndex, dayID: String) -> [HomeRow] {
+        (index.segments.map { HomeRow.segment(dayID: dayID, $0) }
+            + index.gaps.enumerated().map { HomeRow.gap(dayID: dayID, index: $0.offset, $0.element) })
             .sorted { $0.sortDate > $1.sortDate }   // newest first
     }
 }
