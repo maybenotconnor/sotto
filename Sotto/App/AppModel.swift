@@ -372,15 +372,35 @@ final class AppModel {
         return await dayIndex.rebuildAndPersist(dayDirectory: dir)
     }
 
-    /// Failed-row retry (List/Detail "Transcription failed — retry").
+    /// Failed-row retry (List/Detail "Transcription failed — retry"). Unlike the queue, whose
+    /// job state is private and whose transition handler only fires on terminal done/failed,
+    /// this must move the UI-facing day-index state so the tap is visibly acknowledged:
+    /// flip the row to "queued" ("Transcribing…") immediately, run the retry, then reflect the
+    /// terminal outcome. Without the immediate write the row sits on "failed" for the whole
+    /// re-transcription and the button looks dead.
     func retryTranscription(m4aURL: URL) async {
-        if let queue { await queue.retry(m4aURL: m4aURL) }
+        guard let queue else { return }
+        await dayIndex?.updateSegment(
+            m4aURL: m4aURL, transcriptionState: "queued", backend: nil, wordCount: nil)
+        await refreshLoadedHistory()
+        await queue.retry(m4aURL: m4aURL)
+        // The transition handler writes the terminal state to the day index but does not
+        // refresh loaded history on its own, so pick up done/failed-again here.
+        await refreshLoadedHistory()
     }
 
     /// Detail view "Re-transcribe with current backend": replaces any existing job for this
-    /// URL with a fresh one and redrives it (see `TranscriptionQueue.retranscribe`).
+    /// URL with a fresh one and redrives it (see `TranscriptionQueue.retranscribe`). Same
+    /// UI-coordination as `retryTranscription`: flip the row to "queued" for immediate feedback,
+    /// re-run, then reflect the terminal outcome — otherwise the row sits on its old state
+    /// (usually "done") for the whole re-run and the menu action looks dead.
     func retranscribe(m4aURL: URL) async {
-        if let queue { await queue.retranscribe(m4aURL: m4aURL) }
+        guard let queue else { return }
+        await dayIndex?.updateSegment(
+            m4aURL: m4aURL, transcriptionState: "queued", backend: nil, wordCount: nil)
+        await refreshLoadedHistory()
+        await queue.retranscribe(m4aURL: m4aURL)
+        await refreshLoadedHistory()
     }
 
     /// Row deletion (List swipe / Detail button). Both files are removed best-effort — a

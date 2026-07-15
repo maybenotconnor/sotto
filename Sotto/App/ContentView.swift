@@ -120,7 +120,7 @@ private struct HomeScreen: View {
 
             ForEach(model.historySections) { section in
                 Section(header: Text(dayTitle(for: section))) {
-                    ForEach(HomeRow.rows(for: section.index)) { row in
+                    ForEach(HomeRow.rows(for: section.index, dayID: section.id)) { row in
                         rowView(row, in: section)
                     }
                 }
@@ -285,10 +285,10 @@ private struct HomeScreen: View {
     @ViewBuilder
     private func rowView(_ row: HomeRow, in section: AppModel.HistorySection) -> some View {
         switch row {
-        case .gap(_, let gap):
+        case .gap(_, _, let gap):
             GapRowView(gap: gap)
                 .selectionDisabled(true)
-        case .segment(let entry):
+        case .segment(_, let entry):
             NavigationLink {
                 ConversationDetailView(
                     model: model, entry: entry, dayDirectory: section.dayDirectory)
@@ -296,9 +296,15 @@ private struct HomeScreen: View {
                 SegmentRowView(entry: entry, dayDirectory: section.dayDirectory, model: model)
             }
             .swipeActions(edge: .trailing) {
-                Button(role: .destructive) { pendingDelete = PendingDelete(entry: entry, section: section) } label: {
+                // NOT role: .destructive — that makes SwiftUI optimistically play the row-removal
+                // animation on tap, so the row vanishes, the confirm alert appears, then the row
+                // reappears (the model is unchanged until confirm), then vanishes again on Delete.
+                // A plain button tinted red just presents the alert; the row stays put until the
+                // single source of truth (`deleteSegment` on confirm) actually removes it.
+                Button { pendingDelete = PendingDelete(entry: entry, section: section) } label: {
                     Label("Delete", systemImage: "trash")
                 }
+                .tint(.red)
                 ShareLink(item: section.dayDirectory.appendingPathComponent("\(entry.id).md")) {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }

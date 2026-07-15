@@ -15,6 +15,12 @@ struct ConversationDetailView: View {
     @State private var player = AudioPlayerController()
     @State private var audioExists = false
     @State private var confirmDelete = false
+    // The view captures an immutable `entry`, so its transcription branch is driven by this
+    // local mirror (seeded from `entry` at init) rather than `entry.transcriptionState` — a
+    // retry kicked off here flips it to "queued" for immediate feedback, then resolves to
+    // done/failed once the queue settles. Without this the open detail can never reflect a
+    // re-transcription it started.
+    @State private var transcriptionState: String
     // Rename (2026-07-07 spec): the editable hero-title binding + last-persisted value.
     // `savedTitle` is what commit no-ops and reverts compare against — it starts as the same
     // title-or-time fallback the title field first displays.
@@ -24,6 +30,15 @@ struct ConversationDetailView: View {
     /// button, and interactive scroll all clear it).
     @FocusState private var titleEditing: Bool
     @Environment(\.dismiss) private var dismiss
+
+    init(model: AppModel, entry: DaySegmentEntry, dayDirectory: URL) {
+        self.model = model
+        self.entry = entry
+        self.dayDirectory = dayDirectory
+        // Seed the local mirror at construction so the correct branch renders on first frame
+        // (a `.task`-only seed would flash the "unavailable"/default branch for one frame).
+        _transcriptionState = State(initialValue: entry.transcriptionState)
+    }
 
     private var m4aURL: URL { dayDirectory.appendingPathComponent("\(entry.id).m4a") }
     private var mdURL: URL { dayDirectory.appendingPathComponent("\(entry.id).md") }
@@ -124,6 +139,20 @@ struct ConversationDetailView: View {
         }
     }
 
+    /// After a retry or re-transcription settles, re-read this segment's current state from the
+    /// day index (keyed by the known `dayDirectory`, not a date derived from `entry`) and, if it
+    /// now has a transcript, load it — so the open detail reflects the outcome with no navigation
+    /// round trip. Stays on "queued" if the drain is still blocked (offline / assets missing).
+    private func reloadTranscriptionState() async {
+        let updated = await model.dayIndex?.index(forDay: dayDirectory)?
+            .segments.first { $0.id == entry.id }
+        transcriptionState = updated?.transcriptionState ?? "failed"
+        guard transcriptionState != "failed", transcriptionState != "queued" else { return }
+        let parsed = TranscriptFile.parse(url: mdURL)
+        transcript = parsed
+        blocks = parsed?.transcriptBlocks ?? []
+    }
+
     private var metadataRow: some View {
         HStack(spacing: 12) {
             Label(entry.backend == "deepgram" ? "Deepgram" : "On-device",
@@ -170,14 +199,20 @@ struct ConversationDetailView: View {
 
     @ViewBuilder
     private var transcriptBody: some View {
-        switch entry.transcriptionState {
+        switch transcriptionState {
         case "queued":
             HStack(spacing: 8) { ProgressView(); Text("Transcribing…") }
                 .foregroundStyle(.secondary)
         case "failed":
             VStack(alignment: .leading, spacing: 8) {
                 Text("Transcription failed.").foregroundStyle(.red)
-                Button("Retry") { Task { await model.retryTranscription(m4aURL: m4aURL) } }
+                Button("Retry") {
+                    Task {
+                        transcriptionState = "queued"   // acknowledge the tap immediately
+                        await model.retryTranscription(m4aURL: m4aURL)
+                        await reloadTranscriptionState()
+                    }
+                }
             }
         default:
             if let transcript {
@@ -233,7 +268,11 @@ struct ConversationDetailView: View {
                     }
                     if audioExists {
                         Button("Re-transcribe with current backend") {
-                            Task { await model.retranscribe(m4aURL: m4aURL) }
+                            Task {
+                                transcriptionState = "queued"   // acknowledge immediately
+                                await model.retranscribe(m4aURL: m4aURL)
+                                await reloadTranscriptionState()
+                            }
                         }
                     }
                     Button("Delete", role: .destructive) { confirmDelete = true }
