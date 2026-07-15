@@ -224,8 +224,23 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if let summary = transcript.summary {
                         GroupBox("Summary") {
-                            Text(summary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(summary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                // Excerpt disclaimer (2026-07-14): a small, de-emphasized note —
+                                // smaller than the body-sized summary and secondary-colored, so it
+                                // reads as subordinate provenance, not summary content. Rendered
+                                // here rather than inline in the summary text because the summary
+                                // uses a verbatim `Text` (no markdown), which would show the file's
+                                // `_..._` italic markers as literal underscores.
+                                if transcript.summaryIsExcerpt {
+                                    Text(TranscriptMarkdownWriter.excerptDisclaimerText)
+                                        .font(.footnote)
+                                        .italic()
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
                         }
                     }
                     // One `Text` per block inside a `LazyVStack`, not a single `Text` over the

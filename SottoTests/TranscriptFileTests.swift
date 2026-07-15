@@ -205,4 +205,93 @@ struct TranscriptFileTests {
         #expect(blocks.count == 1)
         #expect(blocks[0].text == "Hello there. Short body.")
     }
+
+    // Head+tail excerpt disclaimer (2026-07-14): the writer appends a markdown-italic
+    // disclaimer line to the Summary section of an excerpted long transcript. The in-app
+    // summary is rendered with a verbatim `Text(String)`, which does NOT interpret markdown,
+    // so the `_..._` would show as literal underscores. The parser therefore lifts the
+    // disclaimer out of `summary` (rendered separately, styled) and flags it via
+    // `summaryIsExcerpt`, keeping the untrusted model summary verbatim.
+
+    private func parseFile(_ contents: String) throws -> TranscriptFile {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TFTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("t.md")
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        return try #require(TranscriptFile.parse(url: url))
+    }
+
+    private func excerptedSummaryMarkdown() -> String {
+        """
+        ---
+        date: 2026-03-14T09:15:30-04:00
+        backend: speechAnalyzer
+        title: Long sync
+        ---
+
+        # Long sync — 9:15 AM
+
+        ## Summary
+
+        Quick status sync about the beta.
+
+        Action items:
+        - File compliance
+
+        \(TranscriptMarkdownWriter.excerptDisclaimer)
+
+        ## Transcript
+
+        We synced on the rollout and the beta numbers.
+        """
+    }
+
+    @Test func excerptDisclaimerIsStrippedFromSummary() throws {
+        let file = try parseFile(excerptedSummaryMarkdown())
+        let summary = try #require(file.summary)
+        // The model's summary prose and action items remain part of the summary section…
+        #expect(summary.contains("Quick status sync about the beta."))
+        #expect(summary.contains("File compliance"))
+        // …but the trusted disclaimer is lifted out, so no literal markdown underscores or
+        // disclaimer wording leak into the verbatim-rendered summary body.
+        #expect(!summary.contains("based on excerpts of the transcript"))
+        #expect(!summary.contains("_"))
+    }
+
+    @Test func excerptedSummaryIsFlaggedAsExcerpt() throws {
+        let file = try parseFile(excerptedSummaryMarkdown())
+        #expect(file.summaryIsExcerpt)
+    }
+
+    @Test func completeSummaryIsNotFlaggedAsExcerpt() throws {
+        let file = try parseFile(
+            """
+            ---
+            date: 2026-03-14T09:15:30-04:00
+            backend: speechAnalyzer
+            title: Rollout sync
+            ---
+
+            # Rollout sync — 9:15 AM
+
+            ## Summary
+
+            Quick status sync about the beta.
+
+            ## Transcript
+
+            We synced on the rollout.
+            """)
+        #expect(!file.summaryIsExcerpt)
+        #expect(file.summary?.contains("Quick status sync about the beta.") == true)
+    }
+
+    @Test func excerptDisclaimerDoesNotLeakIntoPreview() throws {
+        let file = try parseFile(excerptedSummaryMarkdown())
+        // previewText prefers the summary; with the disclaimer stripped, the home-row snippet
+        // (also a verbatim `Text`) never shows the raw `_..._` markdown.
+        #expect(!file.previewText.contains("based on excerpts of the transcript"))
+        #expect(!file.previewText.contains("_"))
+    }
 }

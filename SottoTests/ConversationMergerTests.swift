@@ -377,7 +377,13 @@ struct ConversationMergerTests {
 
         #expect(ok)
         let file = try #require(TranscriptFile.parse(url: mdURL))
-        #expect(file.summary?.contains("Important information may have been omitted") == true)
+        // The disclaimer is written into the file (Obsidian/Files render its `_..._` italic)…
+        #expect(file.body.contains("Important information may have been omitted"))
+        // …but it's lifted out of `summary` and surfaced via the flag, so the in-app verbatim
+        // summary never shows the raw markdown, and the model summary stays intact.
+        #expect(file.summaryIsExcerpt)
+        #expect(file.summary?.contains("Important information may have been omitted") == false)
+        #expect(file.summary?.contains("We planned the launch.") == true)
         // Transcript body — gap marker included — still preserved verbatim.
         #expect(file.transcriptBody.contains("First part text one two three."))
         #expect(file.transcriptBody.contains("Second part text four five."))

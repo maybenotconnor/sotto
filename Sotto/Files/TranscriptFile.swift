@@ -37,10 +37,11 @@ struct TranscriptFile {
     /// M8 meeting notes: the frontmatter `title:` value, nil for pre-M8/no-notes files.
     var title: String? { frontmatter["title"] }
 
-    /// M8 meeting notes: the section between a `## Summary` heading and the next `## `
-    /// heading (or the end of the body). Nil when the body has no `## Summary` section —
-    /// i.e. every pre-M8 file and every M8 file whose post-processor produced no notes.
-    var summary: String? {
+    /// The raw text of the `## Summary` section — everything between the `## Summary` heading
+    /// and the next `## ` heading (or the end of the body). Includes the excerpt disclaimer
+    /// line when present; `summary` strips it and `summaryIsExcerpt` detects it. Nil when the
+    /// body has no `## Summary` section.
+    private var rawSummarySection: String? {
         let lines = body.components(separatedBy: "\n")
         guard let start = lines.firstIndex(where: { $0.hasPrefix("## Summary") }) else { return nil }
         let rest = lines[(start + 1)...]
@@ -48,6 +49,31 @@ struct TranscriptFile {
         let section = lines[(start + 1)..<end].joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return section.isEmpty ? nil : section
+    }
+
+    /// M8 meeting notes: the `## Summary` section with the excerpt disclaimer line removed.
+    /// The disclaimer is trusted app text stored as markdown italic (`_..._`), but the in-app
+    /// summary renders through a verbatim `Text(String)` that does NOT interpret markdown — so
+    /// it's lifted out here and rendered separately, de-emphasized (see `summaryIsExcerpt`),
+    /// keeping the untrusted model summary verbatim. Nil when there's no `## Summary` section
+    /// (every pre-M8/no-notes file) or when the section holds nothing but the disclaimer.
+    var summary: String? {
+        guard let section = rawSummarySection else { return nil }
+        let cleaned = section
+            .components(separatedBy: "\n")
+            .filter { $0 != TranscriptMarkdownWriter.excerptDisclaimer }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// True when the summary was built from head+tail excerpts of a long transcript — the
+    /// writer appended `excerptDisclaimer` to the `## Summary` section. Drives the small,
+    /// less-prominent disclaimer shown beneath the summary in the detail view.
+    var summaryIsExcerpt: Bool {
+        rawSummarySection?
+            .components(separatedBy: "\n")
+            .contains(TranscriptMarkdownWriter.excerptDisclaimer) ?? false
     }
 
     /// M8 meeting notes: the body after a `## Transcript` heading, when present — else the

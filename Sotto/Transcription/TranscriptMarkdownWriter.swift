@@ -82,10 +82,15 @@ enum TranscriptMarkdownWriter {
         return url
     }
 
-    /// Trusted app text (NOT model output — bypasses the sanitizers) appended to the Summary
-    /// section when the notes were built from head+tail excerpts of a long transcript.
-    static let excerptDisclaimer =
-        "_Summary based on excerpts of the transcript. Important information may have been omitted._"
+    /// Trusted app text (NOT model output — bypasses the sanitizers) shown when the notes were
+    /// built from head+tail excerpts of a long transcript. `excerptDisclaimerText` is the plain
+    /// wording the in-app UI renders as a small, de-emphasized note (a verbatim summary `Text`
+    /// can't interpret markdown); `excerptDisclaimer` wraps it in markdown emphasis for the
+    /// on-disk Summary section, so Obsidian/Files viewers still render it italic. One source of
+    /// truth for the sentence.
+    static let excerptDisclaimerText =
+        "Summary based on excerpts of the transcript. Important information may have been omitted."
+    static let excerptDisclaimer = "_\(excerptDisclaimerText)_"
 
     /// The `## Summary` … `## Transcript` block, shared by the transcription writer and
     /// `ConversationMerger.applyNotes`. Inputs are already sanitized. Returns `[]` when there
