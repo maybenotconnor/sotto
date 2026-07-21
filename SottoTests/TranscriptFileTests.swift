@@ -294,4 +294,30 @@ struct TranscriptFileTests {
         #expect(!file.previewText.contains("based on excerpts of the transcript"))
         #expect(!file.previewText.contains("_"))
     }
+
+    // Issue #14: the detail view's "no summary could be generated" note is DERIVED (never
+    // persisted) — shown exactly when a summary was expected and is absent.
+    @Test func summaryUnavailableNoteShownOnlyWhenSummaryWasExpected() {
+        let longBody = (0..<30).map { "word\($0)" }.joined(separator: " ")
+        let longNoSummary = TranscriptFile(frontmatter: [:], body: longBody)
+        // Long enough for notes, none present, model available → explain the gap.
+        #expect(ConversationDetailView.showsSummaryUnavailableNote(
+            file: longNoSummary, modelAvailable: true))
+        // No Apple Intelligence on this device → the feature is absent, nothing to explain.
+        #expect(!ConversationDetailView.showsSummaryUnavailableNote(
+            file: longNoSummary, modelAvailable: false))
+        // Short transcript → generation is skipped BY DESIGN (minimumWords) → no note.
+        let shortNoSummary = TranscriptFile(frontmatter: [:], body: "Just a few words here.")
+        #expect(!ConversationDetailView.showsSummaryUnavailableNote(
+            file: shortNoSummary, modelAvailable: true))
+        // Summary present → nothing missing.
+        let withSummary = TranscriptFile(
+            frontmatter: [:],
+            body: "## Summary\n\nA real summary.\n\n## Transcript\n\n" + longBody)
+        #expect(!ConversationDetailView.showsSummaryUnavailableNote(
+            file: withSummary, modelAvailable: true))
+        // Unparseable/missing file → nothing to judge.
+        #expect(!ConversationDetailView.showsSummaryUnavailableNote(
+            file: nil, modelAvailable: true))
+    }
 }
