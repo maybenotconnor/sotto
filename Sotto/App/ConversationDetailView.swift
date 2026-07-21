@@ -15,6 +15,11 @@ struct ConversationDetailView: View {
     @State private var player = AudioPlayerController()
     @State private var audioExists = false
     @State private var confirmDelete = false
+    // Issue #14: true when a summary SHOULD exist but doesn't — the on-device model declined
+    // (or otherwise failed) to generate one. Derived from the parsed .md, never persisted:
+    // the file stays byte-identical to a no-notes file. Computed once per transcript load
+    // (like `blocks`) so the player slider's re-renders never re-split the body.
+    @State private var summaryUnavailable = false
     // The view captures an immutable `entry`, so its transcription branch is driven by this
     // local mirror (seeded from `entry` at init) rather than `entry.transcriptionState` — a
     // retry kicked off here flips it to "queued" for immediate feedback, then resolves to
@@ -54,6 +59,8 @@ struct ConversationDetailView: View {
                 // Split into blocks up front (cheap string work) so the render path only ever
                 // markdown-parses the handful of blocks the LazyVStack materializes on screen.
                 blocks = parsed?.transcriptBlocks ?? []
+                summaryUnavailable = Self.showsSummaryUnavailableNote(
+                    file: parsed, modelAvailable: FoundationModelsPostProcessor.isModelAvailable)
                 savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
                 editableTitle = savedTitle
                 // hasAudio is advisory (M5 review): stat the file before offering playback.
@@ -151,6 +158,19 @@ struct ConversationDetailView: View {
         let parsed = TranscriptFile.parse(url: mdURL)
         transcript = parsed
         blocks = parsed?.transcriptBlocks ?? []
+        summaryUnavailable = Self.showsSummaryUnavailableNote(
+            file: parsed, modelAvailable: FoundationModelsPostProcessor.isModelAvailable)
+    }
+
+    /// Issue #14: whether to show the "no summary could be generated" note. True only when a
+    /// summary was genuinely expected and is absent: the transcript parsed, has no `## Summary`,
+    /// is long enough that generation wasn't skipped by design (`minimumWords`), AND this device
+    /// can generate summaries at all — on non-Apple-Intelligence hardware the whole feature is
+    /// absent, so a missing summary explains itself. Static + parameterized for testability.
+    static func showsSummaryUnavailableNote(file: TranscriptFile?, modelAvailable: Bool) -> Bool {
+        guard modelAvailable, let file, file.summary == nil else { return false }
+        let words = file.transcriptBody.split { $0.isWhitespace || $0.isNewline }.count
+        return words >= FoundationModelsPostProcessor.minimumWords
     }
 
     private var metadataRow: some View {
@@ -241,6 +261,19 @@ struct ConversationDetailView: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
+                        }
+                    } else if summaryUnavailable {
+                        // Issue #14: the on-device model declined/failed to summarize this
+                        // conversation (deterministic for the content — re-transcribing won't
+                        // change it). Explain the gap instead of silently omitting the section;
+                        // same de-emphasized styling as the excerpt disclaimer. UI-only: the
+                        // .md on disk stays byte-identical to a no-notes file.
+                        GroupBox("Summary") {
+                            Text("No summary could be generated for this conversation.")
+                                .font(.footnote)
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     // One `Text` per block inside a `LazyVStack`, not a single `Text` over the
