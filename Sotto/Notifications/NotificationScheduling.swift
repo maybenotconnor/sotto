@@ -11,8 +11,11 @@ protocol NotificationScheduling: Sendable {
     /// automatically — recording continues, but the user should know capture quality may
     /// have changed. `deviceName` is the wearable family's display name ("Omi").
     func scheduleSourceFallbackNotification(deviceName: String) async
-    /// M12: the wearable dropped AND the iPhone mic could not start — nothing is capturing.
-    func scheduleCaptureUnavailableNotification(deviceName: String) async
+    /// M12 → redesign spec §3: the wearable is gone AND the iPhone mic could not start —
+    /// nothing is capturing. Scheduled with `delay` (30 s: only persistent gaps alert)
+    /// and cancelled by `cancelCaptureUnavailableNotification` on recovery or stop.
+    func scheduleCaptureUnavailableNotification(deviceName: String, delay: TimeInterval) async
+    func cancelCaptureUnavailableNotification() async
     /// M12: the wearable's reported battery level is low.
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async
 }
@@ -26,10 +29,11 @@ struct UserNotificationScheduler: NotificationScheduling {
     private static let lowBatteryIdentifier = "sotto.omiLowBattery"
 
     func requestAuthorizationIfNeeded() async {
-        // Provisional: delivered quietly, no permission prompt (SPEC onboarding defers the
-        // full prompt decision to M6; provisional keeps the fallback path working today).
+        // Full [.alert, .sound], not provisional (redesign spec §3): the "Recording
+        // stopped" alert must always deliver loudly; provisional-quiet delivery is why
+        // it was historically missed. Called from the foreground only (pipeline gates).
         _ = try? await UNUserNotificationCenter.current()
-            .requestAuthorization(options: [.alert, .provisional])
+            .requestAuthorization(options: [.alert, .sound])
     }
 
     func schedulePausedNotification() async {
@@ -56,13 +60,21 @@ struct UserNotificationScheduler: NotificationScheduling {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    func scheduleCaptureUnavailableNotification(deviceName: String) async {
+    func scheduleCaptureUnavailableNotification(deviceName: String, delay: TimeInterval) async {
         let content = UNMutableNotificationContent()
         content.title = "Recording stopped"
         content.body = "The \(deviceName) disconnected and the iPhone microphone could not start. Open Sotto to resume."
+        content.sound = .default
         let request = UNNotificationRequest(
-            identifier: Self.captureUnavailableIdentifier, content: content, trigger: nil)
+            identifier: Self.captureUnavailableIdentifier, content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false))
         try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    func cancelCaptureUnavailableNotification() async {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.captureUnavailableIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.captureUnavailableIdentifier])
     }
 
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async {

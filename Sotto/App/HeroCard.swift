@@ -101,7 +101,8 @@ struct HeroCard: View {
             segmentStart: pipeline.currentSegmentStartDate,
             status: pipeline.status,
             haltReason: pipeline.haltReason,
-            sessionStart: pipeline.sessionStartedAt)
+            sessionStart: pipeline.sessionStartedAt,
+            waiting: pipeline.isWaitingForCapture)
     }
 
     var body: some View {

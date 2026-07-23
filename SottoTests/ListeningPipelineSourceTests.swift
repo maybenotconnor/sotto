@@ -55,7 +55,7 @@ struct ListeningPipelineSourceTests {
         await mic.setStartError(Boom())              // NOW the fallback will fail
         await omi.setState(.disconnected)            // grace → mic fails → waiting
         try await Task.sleep(for: .milliseconds(300))
-        #expect(await notifications.captureUnavailableCount == 1)
+        #expect(await notifications.captureUnavailableDelays.count == 1)
         #expect(pipeline.activeSourceType == nil)
         await pipeline.stop()
     }
@@ -78,7 +78,7 @@ struct ListeningPipelineSourceTests {
         // Mic-first: phoneMic.start() throws inline during start(), so captureUnavailable
         // is the pipeline's first-ever source event — no race delay to wait out.
         try await Task.sleep(for: .milliseconds(100))
-        #expect(await notifications.captureUnavailableCount == 1)
+        #expect(await notifications.captureUnavailableDelays.count == 1)
         #expect(pipeline.activeSourceType == nil)
         await pipeline.stop()
     }
@@ -271,5 +271,125 @@ struct ListeningPipelineSourceTests {
         // Mic-first: the first upgrade finalizes the mic segment (rollover .omi) before the
         // disconnect fallback's rollover — two calls, deterministic order.
         #expect(await recorder.rolloverCalls == [.omi, .phoneMic])
+    }
+
+    @Test func captureUnavailableDerivesWaitingAndSchedulesDelayedNotification() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let scheduler = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(source: failover, recorder: recorder, notifications: scheduler)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(150))    // let the captureUnavailable event land
+        #expect(pipeline.status == .listening)           // session alive
+        #expect(pipeline.isWaitingForCapture)
+        #expect(await scheduler.captureUnavailableDelays == [ListeningPipeline.waitingNotificationDelay])
+        await pipeline.stop()
+    }
+
+    @Test func captureUnavailableAfterActiveSourceFinalizesViaRollover() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let scheduler = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(source: failover, recorder: recorder, notifications: scheduler)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(100))    // mic-first activation lands
+        await omi.setState(.streaming)                   // upgrade to omi
+        try await Task.sleep(for: .milliseconds(100))
+        await mic.setStartError(Boom())                  // next fallback will fail
+        await omi.setState(.disconnected)                // grace → mic fails → waiting
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(pipeline.isWaitingForCapture)
+        // The rollover finalizing the dead-capture segment carried the LAST live source.
+        #expect(await recorder.rolloverCalls.last == .omi)
+        await pipeline.stop()
+    }
+
+    @Test func retryRestoresCaptureAndCancelsNotification() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let scheduler = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(source: failover, recorder: recorder, notifications: scheduler)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(pipeline.isWaitingForCapture)
+        await mic.setStartError(nil)                     // foreground made the mic legal
+        await pipeline.retryCaptureIfWaiting()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(!pipeline.isWaitingForCapture)
+        #expect(pipeline.activeSourceType == .phoneMic)
+        #expect(await scheduler.captureUnavailableCancelCount >= 1)
+        await pipeline.stop()
+    }
+
+    @Test func failedRetryDoesNotRearmNotification() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let scheduler = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(source: failover, recorder: recorder, notifications: scheduler)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(await scheduler.captureUnavailableDelays.count == 1)
+        await pipeline.retryCaptureIfWaiting()           // mic still throwing
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(await scheduler.captureUnavailableDelays.count == 1)   // not a new waiting entry
+        await pipeline.stop()
+    }
+
+    @Test func stopWhileWaitingCancelsNotification() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let scheduler = FakeNotificationScheduler()
+        let pipeline = ListeningPipeline(source: failover, recorder: recorder, notifications: scheduler)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(150))
+        await pipeline.stop()                            // deliberate stop at t+ε
+        #expect(await scheduler.captureUnavailableCancelCount >= 1)   // no loud lie 30 s later
+    }
+
+    @Test func liveActivityMirrorsWaiting() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(
+            wearable: omi, phoneMic: mic,
+            config: FailoverConfig(reconnectGrace: .milliseconds(80), returnHysteresis: .milliseconds(120)))
+        let recorder = FakeRecorder()
+        let activity = FakeLiveActivityController()
+        let pipeline = ListeningPipeline(
+            source: failover, recorder: recorder, liveActivity: activity)
+        await pipeline.start()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(activity.updates.last?.phase == .waiting)
+        await pipeline.stop()
     }
 }
