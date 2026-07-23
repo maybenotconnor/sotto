@@ -16,6 +16,7 @@ extension SottoActivityAttributes.Phase {
         case .recording: "Recording"
         case .pausedByUser: "Paused by you"
         case .pausedBySystem: "Paused — call"
+        case .waiting: "Waiting"
         }
     }
 
@@ -24,6 +25,7 @@ extension SottoActivityAttributes.Phase {
         case .listening: .green
         case .recording: .red
         case .pausedByUser, .pausedBySystem: .orange
+        case .waiting: .orange
         }
     }
 
@@ -33,6 +35,7 @@ extension SottoActivityAttributes.Phase {
         case .listening: "waveform"
         case .recording: "record.circle.fill"
         case .pausedByUser, .pausedBySystem: "pause.circle.fill"
+        case .waiting: "hourglass"
         }
     }
 
@@ -42,6 +45,7 @@ extension SottoActivityAttributes.Phase {
         case .listening: "waveform"
         case .recording: "record.circle.fill"
         case .pausedByUser, .pausedBySystem: "pause.fill"
+        case .waiting: "hourglass"
         }
     }
 }

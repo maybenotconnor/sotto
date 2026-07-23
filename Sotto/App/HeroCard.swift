@@ -10,15 +10,22 @@ enum HeaderState: Equatable {
     case starting
     case interrupted(ListeningPipeline.HaltReason?)
     case listening(sessionStart: Date?)
+    case waiting(sessionStart: Date?)
     case segmentOpen(start: Date)
 
     init(
         segmentStart: Date?,
         status: ListeningPipeline.Status,
         haltReason: ListeningPipeline.HaltReason?,
-        sessionStart: Date?
+        sessionStart: Date?,
+        waiting: Bool = false
     ) {
-        if let segmentStart {
+        // Waiting first (spec §2): it derives only for statuses that would otherwise
+        // falsely claim capture, and it outranks a stale open-segment date — capture is
+        // dead, so a pulsing "Recording…" would be a lie.
+        if waiting, status == .listening || status == .recording || status == .silence {
+            self = .waiting(sessionStart: sessionStart)
+        } else if let segmentStart {
             self = .segmentOpen(start: segmentStart)
         } else {
             switch status {
@@ -37,6 +44,7 @@ enum HeaderState: Equatable {
         case .starting: "Starting…"
         case .interrupted(let reason): reason == .userPause ? "Paused by you" : "Paused — call"
         case .listening: "Listening"
+        case .waiting: "Waiting"
         case .segmentOpen: "Recording…"
         }
     }
@@ -46,6 +54,7 @@ enum HeaderState: Equatable {
         case .idle, .starting: .secondary
         case .interrupted: .orange
         case .listening: .green
+        case .waiting: .orange
         case .segmentOpen: .red
         }
     }
@@ -56,7 +65,7 @@ enum HeaderState: Equatable {
         switch self {
         case .segmentOpen(let start): start
         case .listening(let sessionStart): sessionStart
-        case .idle, .starting, .interrupted: nil
+        case .idle, .starting, .interrupted, .waiting: nil
         }
     }
 
@@ -129,7 +138,12 @@ struct HeroCard: View {
     }
 
     @ViewBuilder private var subtitleLine: some View {
-        if let timerStart = state.timerStart {
+        if case .waiting = state {
+            Text("Can't record right now — waiting for \(model.pairedDeviceKind?.displayName ?? "your device") or the iPhone mic.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 22)
+        } else if let timerStart = state.timerStart {
             Text(timerStart, style: .timer)
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(.secondary)
