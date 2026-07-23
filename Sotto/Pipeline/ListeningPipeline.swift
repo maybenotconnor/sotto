@@ -64,6 +64,10 @@ final class ListeningPipeline {
     private let heartbeat: HeartbeatStore?
     private let liveActivity: (any LiveActivityControlling)?
     private let notifications: (any NotificationScheduling)?
+    /// Test seam for the foreground-only authorization gate (spec §3): a hosted test
+    /// run's UIApplication state is not reliably .active, so tests inject a fixed
+    /// answer instead of inheriting the host's.
+    var isAppActive: @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }
     private var pumpTask: Task<Void, Never>?
     private var sourceEventTask: Task<Void, Never>?
     private var isTransitioning = false
@@ -136,7 +140,7 @@ final class ListeningPipeline {
             }
             // Spec §3: the authorization prompt only exists in the foreground; a cold
             // background start defers it to the next foreground session start.
-            if UIApplication.shared.applicationState == .active {
+            if isAppActive() {
                 await notifications?.requestAuthorizationIfNeeded()
             }
             sessionStartedAt = Date()

@@ -171,6 +171,8 @@ struct InterruptionTests {
         let pipeline = ListeningPipeline(
             source: source, recorder: FakeRecorder(),
             liveActivity: nil, notifications: notifications)
+        // Pin the foreground gate: host app state is environment-dependent.
+        pipeline.isAppActive = { true }
 
         await pipeline.start()
         #expect(await notifications.authorizationRequests == 1)
