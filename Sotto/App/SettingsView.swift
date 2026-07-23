@@ -119,6 +119,8 @@ struct SettingsView: View {
             if let name = model.pairedDeviceName {
                 LabeledContent("Device", value: name)
                 LabeledContent("Status", value: deviceStatusLabel)
+                Text("Live status appears while Sotto is listening.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let battery = model.deviceBatteryLevel {
                     LabeledContent("Battery", value: "\(battery)%")
                 }
@@ -143,11 +145,21 @@ struct SettingsView: View {
     }
 
     private var deviceStatusLabel: String {
-        switch model.deviceConnectionState {
+        Self.deviceStatusLabel(for: model.deviceConnectionState)
+    }
+
+    /// Redesign spec §4: `nil` means "no session has observed the device" (status is
+    /// session-scoped by design, SPEC "Omi Device") — it must not read as a failure.
+    /// In-session `.disconnected` is the genuinely-lost case and keeps the scary label.
+    /// `nonisolated`: the View protocol's @MainActor inference would otherwise isolate
+    /// this pure function and block the non-isolated unit test.
+    nonisolated static func deviceStatusLabel(for state: DeviceConnectionState?) -> String {
+        switch state {
         case .streaming: "Streaming"
         case .connected: "Connected"
         case .connecting: "Connecting…"
-        case .disconnected, nil: "Not connected"
+        case .disconnected: "Not connected"
+        case nil: "Connects when listening"
         case .unavailable(.poweredOff): "Bluetooth is off"
         case .unavailable(.unauthorized): "Bluetooth permission needed"
         case .unavailable(.unsupported): "Bluetooth unavailable"

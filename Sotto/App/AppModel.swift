@@ -1015,6 +1015,11 @@ final class AppModel {
                             self?.deviceSetupFailure = failure
                         }
                     }
+                    // Session over (the source's stop() finished this stream): the final
+                    // yielded state (.disconnected) described the torn-down session, not
+                    // the device. Reset so Settings shows the idle "Connects when
+                    // listening" copy instead of a scary "Not connected" (spec §4).
+                    await MainActor.run { self?.deviceConnectionState = nil }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }
