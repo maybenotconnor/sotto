@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import os
 
 /// Real OmiTransport over CoreBluetooth. Design notes:
 /// - Scans by SERVICE UUID (never name — survives the Friend→Omi rebrand and is required
@@ -37,6 +38,26 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
     /// dropped" disconnect from a phantom one delivered late for a connect that never
     /// completed (or belonged to a prior, cancelled session for the same device).
     private var didConnectThisSession = false
+
+    /// Redesign spec §4: negotiation failures must be visible and self-healing, never a
+    /// silent pin at "Connecting…". Error-level so a retry loop is visible in diagnostics.
+    private let logger = Logger(subsystem: "app.decanlys.sotto", category: "OmiTransport")
+
+    /// Negotiation failed on a CONNECTED peripheral (service/characteristic discovery or
+    /// the codec read). Cancel the link and let didDisconnectPeripheral's existing path
+    /// drive the retry — it yields .disconnected → .connecting and re-issues connect, so
+    /// the UI reads "Connecting…" during the retry instead of pinning over a dead link.
+    /// No explicit backoff: retry cadence is gated by the BLE stack's own connect latency,
+    /// matching the existing pending-retry pattern (spec §4).
+    private func retryNegotiation(_ peripheral: CBPeripheral, because reason: String) {
+        // Stale-callback gate (same rationale as didDisconnectPeripheral's guard, see the
+        // class header): a late discovery/read callback from a connection that already
+        // dropped must not cancel the pending reconnect that disconnect handling issued.
+        guard didConnectThisSession else { return }
+        logger.error("negotiation failed: \(reason, privacy: .public) — reconnecting")
+        audioCharacteristic = nil
+        central?.cancelPeripheralConnection(peripheral)
+    }
 
     /// Whether the public scan() consumer currently wants the radio scanning.
     private var publicScanActive = false
@@ -192,8 +213,10 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
                         error: Error?) {
         guard peripheral.identifier == targetDeviceID else { return }
+        logger.error("connect failed: \(String(describing: error), privacy: .public) — pending retry")
         eventContinuation?.yield(.disconnected)
-        central.connect(peripheral)      // pending retry, completes on reappearance
+        eventContinuation?.yield(.connecting)   // parity with didDisconnectPeripheral: a
+        central.connect(peripheral)             // pending retry IS connecting (spec §4)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
@@ -212,7 +235,16 @@ extension CoreBluetoothOmiTransport: CBCentralManagerDelegate {
 extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peripheral.identifier == targetDeviceID else { return }
-        for service in peripheral.services ?? [] {
+        if let error {
+            retryNegotiation(peripheral, because: "service discovery error: \(error)")
+            return
+        }
+        let services = peripheral.services ?? []
+        guard services.contains(where: { $0.uuid == audioServiceUUID }) else {
+            retryNegotiation(peripheral, because: "audio service missing from discovery result")
+            return
+        }
+        for service in services {
             if service.uuid == audioServiceUUID {
                 peripheral.discoverCharacteristics([
                     CBUUID(string: OmiConstants.audioDataCharacteristicUUID),
@@ -228,6 +260,18 @@ extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral,
                     didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard peripheral.identifier == targetDeviceID else { return }
+        if service.uuid == audioServiceUUID {
+            if let error {
+                retryNegotiation(peripheral, because: "characteristic discovery error: \(error)")
+                return
+            }
+            let uuids = (service.characteristics ?? []).map(\.uuid)
+            guard uuids.contains(CBUUID(string: OmiConstants.codecCharacteristicUUID)),
+                  uuids.contains(CBUUID(string: OmiConstants.audioDataCharacteristicUUID)) else {
+                retryNegotiation(peripheral, because: "codec/audio characteristic missing")
+                return
+            }
+        }
         for characteristic in service.characteristics ?? [] {
             switch characteristic.uuid {
             case CBUUID(string: OmiConstants.codecCharacteristicUUID):
@@ -246,9 +290,18 @@ extension CoreBluetoothOmiTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral.identifier == targetDeviceID else { return }
+        if characteristic.uuid == CBUUID(string: OmiConstants.codecCharacteristicUUID), let error {
+            retryNegotiation(peripheral, because: "codec read error: \(error)")
+            return
+        }
         guard let value = characteristic.value else { return }
         switch characteristic.uuid {
         case CBUUID(string: OmiConstants.codecCharacteristicUUID):
+            if value.isEmpty {
+                // Spec §4: no known firmware sends this — surfacing beats silence, failing
+                // would be speculative. Opus is the documented default on firmware ≥1.0.3.
+                logger.error("codec characteristic empty — defaulting to Opus")
+            }
             let codecValue = value.first ?? OmiConstants.codecOpusAt16kHz
             eventContinuation?.yield(.connected(codecValue: codecValue))
             if let audioCharacteristic {

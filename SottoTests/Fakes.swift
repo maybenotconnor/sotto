@@ -219,13 +219,17 @@ actor FakeNotificationScheduler: NotificationScheduling {
     private(set) var cancelled = 0
     // M12 Task 8: counters for the source-change notification seam.
     private(set) var sourceFallbackCount = 0
-    private(set) var captureUnavailableCount = 0
+    private(set) var captureUnavailableDelays: [TimeInterval] = []
+    private(set) var captureUnavailableCancelCount = 0
     private(set) var lowBatteryLevels: [Int] = []
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
     func schedulePausedNotification() { scheduled += 1 }
     func cancelPausedNotification() { cancelled += 1 }
     func scheduleSourceFallbackNotification(deviceName: String) { sourceFallbackCount += 1 }
-    func scheduleCaptureUnavailableNotification(deviceName: String) { captureUnavailableCount += 1 }
+    func scheduleCaptureUnavailableNotification(deviceName: String, delay: TimeInterval) {
+        captureUnavailableDelays.append(delay)
+    }
+    func cancelCaptureUnavailableNotification() { captureUnavailableCancelCount += 1 }
     func scheduleLowBatteryNotification(deviceName: String, level: Int) { lowBatteryLevels.append(level) }
 }
 
@@ -238,7 +242,8 @@ actor GatedNotificationScheduler: NotificationScheduling {
     func requestAuthorizationIfNeeded() {}
     func schedulePausedNotification() {}
     func scheduleSourceFallbackNotification(deviceName: String) {}
-    func scheduleCaptureUnavailableNotification(deviceName: String) {}
+    func scheduleCaptureUnavailableNotification(deviceName: String, delay: TimeInterval) {}
+    func cancelCaptureUnavailableNotification() {}
     func scheduleLowBatteryNotification(deviceName: String, level: Int) {}
 
     func cancelPausedNotification() async {

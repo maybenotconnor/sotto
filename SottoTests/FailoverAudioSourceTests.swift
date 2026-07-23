@@ -4,88 +4,120 @@ import Testing
 
 struct FailoverAudioSourceTests {
     private let fastConfig = FailoverConfig(
-        startupRace: .milliseconds(80),
         reconnectGrace: .milliseconds(80),
         returnHysteresis: .milliseconds(120))
+    /// For asserting IMMEDIATE transitions: if the implementation wrongly applied the
+    /// hysteresis, the change would take 5 s and the elapsed-time assertion fails.
+    private let slowReturnConfig = FailoverConfig(
+        reconnectGrace: .milliseconds(80),
+        returnHysteresis: .seconds(5))
 
     private func makeChunk(_ value: Float = 0.5) -> AudioChunk {
         AudioChunk(samples: [Float](repeating: value, count: 4096), hostTime: 1)
     }
 
-    /// Collects change events into an actor-safe box for assertions.
     private func collectChanges(_ source: FailoverAudioSource) async -> AsyncStream<AudioSourceChange>.AsyncIterator {
         await source.sourceChanges().makeAsyncIterator()
     }
 
-    @Test func omiWinsStartupRaceWhenStreaming() async throws {
+    @Test func micActivatesImmediatelyOnStart() async throws {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         var changes = await collectChanges(failover)
         let stream = try await failover.start()
-        await omi.setState(.streaming)
-        #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .initial))
-        await omi.emitChunk(makeChunk())
-        var it = stream.makeAsyncIterator()
-        #expect(await it.next()?.samples.count == 4096)
-        #expect(await mic.startCount == 0)   // phone mic never touched
-        await failover.stop()
-    }
-
-    @Test func phoneMicWinsWhenOmiSilentPastRace() async throws {
-        let omi = FakeConnectableAudioSource()
-        let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
-        var changes = await collectChanges(failover)
-        let stream = try await failover.start()
-        // No omi streaming within 80 ms:
         #expect(await changes.next() == AudioSourceChange(source: .phoneMic, reason: .initial))
+        #expect(await mic.startCount == 1)
         await mic.emitChunk(makeChunk())
         var it = stream.makeAsyncIterator()
-        #expect(await it.next() != nil)
+        #expect(await it.next()?.samples.count == 4096)
         await failover.stop()
     }
 
-    @Test func disconnectPastGraceFallsBackAndRecoveryReturns() async throws {
+    @Test func startWithThrowingMicEntersWaitingWithoutThrowing() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()   // must NOT throw (spec §1)
+        #expect(await changes.next() == AudioSourceChange(source: nil, reason: .captureUnavailable))
+        #expect(await failover.activeSourceType == nil)
+        #expect(await omi.startCount == 1)   // the wearable side stays armed
+        await failover.stop()
+    }
+
+    @Test func firstStreamingUpgradesImmediately() async throws {
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: slowReturnConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)
+        let clock = ContinuousClock()
+        let t0 = clock.now
+        await omi.setState(.streaming)
+        #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .wearableRecovered))
+        #expect(clock.now - t0 < .seconds(1))   // immediate, not the 5 s hysteresis
+        #expect(await mic.stopCount >= 1)
+        await failover.stop()
+    }
+
+    @Test func rescueFromWaitingIsImmediate() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: slowReturnConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.reason == .captureUnavailable)
+        let clock = ContinuousClock()
+        let t0 = clock.now
+        await omi.setState(.streaming)
+        #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .initial))
+        #expect(clock.now - t0 < .seconds(1))   // hysteresis never delays zero-capture rescue
+        await failover.stop()
+    }
+
+    @Test func postFailureReturnWaitsHysteresis() async throws {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         var changes = await collectChanges(failover)
         _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)      // mic-first
         await omi.setState(.streaming)
-        #expect(await changes.next()?.reason == .initial)
-
+        #expect(await changes.next()?.source == .omi)           // first upgrade, immediate
         await omi.setState(.disconnected)
         #expect(await changes.next() == AudioSourceChange(source: .phoneMic, reason: .wearableDisconnected))
-
-        await omi.setState(.streaming)          // stays stable through hysteresis
+        await omi.setState(.streaming)                          // returned after a failure
+        try await Task.sleep(for: .milliseconds(30))            // < 120 ms hysteresis
+        #expect(await failover.activeSourceType == .phoneMic)   // still proving itself
         #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .wearableRecovered))
-        #expect(await mic.stopCount >= 1)
         await failover.stop()
     }
 
     @Test func blipWithinGraceDoesNotSwitch() async throws {
-        // Widened window (M12 final review Important #3): a dedicated config pushes
-        // reconnectGrace to 300ms with the blip landing at 50ms — comfortably inside the
-        // window, instead of a 20ms blip inside the shared 80ms `fastConfig` grace, which
-        // could flake under scheduler load. Implementation timing (FailoverAudioSource
-        // itself) is untouched — only this test's fake config widens; `fastConfig` stays
-        // shared/unmodified for the other tests in this file.
+        // Widened window (M12 final review Important #3 precedent): 300 ms grace with the
+        // blip at 50 ms — comfortably inside, immune to scheduler load.
         let config = FailoverConfig(
-            startupRace: .milliseconds(80), reconnectGrace: .milliseconds(300),
-            returnHysteresis: .milliseconds(300))
+            reconnectGrace: .milliseconds(300), returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: config)
         var changes = await collectChanges(failover)
         _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)
         await omi.setState(.streaming)
-        #expect(await changes.next()?.reason == .initial)
+        #expect(await changes.next()?.source == .omi)
         await omi.setState(.disconnected)
-        try await Task.sleep(for: .milliseconds(50))     // well inside the 300ms grace
+        try await Task.sleep(for: .milliseconds(50))     // well inside the 300 ms grace
         await omi.setState(.streaming)
-        try await Task.sleep(for: .milliseconds(350))    // past the original grace duration
-        #expect(await mic.startCount == 0)               // never fell back
+        try await Task.sleep(for: .milliseconds(350))    // past the grace duration
+        #expect(await mic.startCount == 1)               // never re-fell-back (1 = mic-first start)
+        #expect(await failover.activeSourceType == .omi)
         await failover.stop()
     }
 
@@ -95,65 +127,31 @@ struct FailoverAudioSourceTests {
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         var changes = await collectChanges(failover)
         _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)
         await omi.setState(.streaming)
-        _ = await changes.next()                          // initial
+        #expect(await changes.next()?.source == .omi)           // first upgrade
         await omi.setState(.disconnected)
-        _ = await changes.next()                          // wearableDisconnected
+        #expect(await changes.next()?.source == .phoneMic)      // grace expired → mic
         await omi.setState(.streaming)
-        try await Task.sleep(for: .milliseconds(30))      // < 120 ms hysteresis
-        await omi.setState(.disconnected)                 // flap: cancels the return
+        try await Task.sleep(for: .milliseconds(30))            // < 120 ms hysteresis
+        await omi.setState(.disconnected)                       // flap: cancels the return
         try await Task.sleep(for: .milliseconds(250))
         #expect(await failover.activeSourceType == .phoneMic)
         await failover.stop()
     }
 
-    @Test func micFailureEmitsCaptureUnavailableThenOmiRecovers() async throws {
-        struct Boom: Error {}
-        let omi = FakeConnectableAudioSource()
-        let mic = FakeSimpleAudioSource()
-        await mic.setStartError(Boom())
-        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
-        var changes = await collectChanges(failover)
-        _ = try await failover.start()
-        await omi.setState(.streaming)
-        _ = await changes.next()                          // initial
-        await omi.setState(.disconnected)
-        #expect(await changes.next() == AudioSourceChange(source: nil, reason: .captureUnavailable))
-        await omi.setState(.streaming)
-        #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .wearableRecovered))
-        await failover.stop()
-    }
-
     @Test func stopDuringDelayedMicStartLeavesNoOrphanCapture() async throws {
-        // Widened window (M12 final review Important #3): a dedicated config pushes
-        // reconnectGrace to 300ms (mic start delay to 600ms) with the sleep landing at
-        // 350ms — 50ms past the grace boundary, comfortably inside the [300, 900] window
-        // instead of 130ms inside the shared fastConfig's [80, 230]. Implementation timing
-        // is untouched; only this test's fake config/delay widen.
-        let config = FailoverConfig(
-            startupRace: .milliseconds(80), reconnectGrace: .milliseconds(300),
-            returnHysteresis: .milliseconds(300))
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
-        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: config)
-        // Collect every change event from the start so we can assert none arrived after stop.
-        let changeStream = await failover.sourceChanges()
-        let collected = Task<[AudioSourceChange], Never> {
-            var events: [AudioSourceChange] = []
-            for await change in changeStream { events.append(change) }
-            return events
-        }
-        await mic.setStartDelay(600)
-        _ = try await failover.start()
-        await omi.setState(.streaming)
-        await omi.setState(.disconnected)          // arms the 300 ms grace timer
-        try await Task.sleep(for: .milliseconds(350))   // grace (300ms) fires; mic.start() now suspended
+        await mic.setStartDelay(150)
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        let startTask = Task { _ = try await failover.start() }
+        try await Task.sleep(for: .milliseconds(50))    // inside the suspended inline mic start
         await failover.stop()
-        try await Task.sleep(for: .milliseconds(600))   // let the delayed (600ms) start fully resolve
-        #expect(await mic.stopCount >= (await mic.startCount))
+        _ = try? await startTask.value
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await mic.stopCount >= 1)               // orphaned start undone (RACE A)
         #expect(await failover.activeSourceType == nil)
-        let events = await collected.value
-        #expect(!events.contains { $0.source == .phoneMic })
     }
 
     @Test func omiDropDuringDelayedMicStopRestartsMic() async throws {
@@ -162,16 +160,32 @@ struct FailoverAudioSourceTests {
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
         var changes = await collectChanges(failover)
         _ = try await failover.start()
-        await omi.setState(.streaming)
-        #expect(await changes.next()?.reason == .initial)
-        await omi.setState(.disconnected)
-        #expect(await changes.next() == AudioSourceChange(source: .phoneMic, reason: .wearableDisconnected))
-        await mic.setStopDelay(150)
-        await omi.setState(.streaming)              // arms the 120 ms return-hysteresis timer
-        try await Task.sleep(for: .milliseconds(160))   // hysteresis (120ms) fires; phoneMic.stop() suspended
-        await omi.setState(.disconnected)               // omi drops during the suspended stop
-        try await Task.sleep(for: .milliseconds(350))   // let everything settle
+        #expect(await changes.next()?.source == .phoneMic)
+        await mic.setStopDelay(100)
+        await omi.setState(.streaming)                  // first upgrade suspends on mic.stop()
+        try await Task.sleep(for: .milliseconds(30))
+        await omi.setState(.disconnected)               // drops during the suspension (RACE B)
+        let change = await changes.next()
+        #expect(change?.source == .phoneMic)            // mic restarted, not a dead-omi claim
         #expect(await failover.activeSourceType == .phoneMic)
+        await failover.stop()
+    }
+
+    @Test func micFailureAfterWearableActivatedMidStartDoesNotClobber() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        await mic.setStartDelay(100)                    // suspend the inline mic start
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        let startTask = Task { _ = try await failover.start() }
+        try await Task.sleep(for: .milliseconds(30))    // inside the suspension
+        await omi.setState(.streaming)                  // wearable activates first
+        #expect(await changes.next() == AudioSourceChange(source: .omi, reason: .initial))
+        _ = try? await startTask.value                  // mic start resumes and throws
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await failover.activeSourceType == .omi)   // live wearable NOT clobbered
         await failover.stop()
     }
 
@@ -179,13 +193,82 @@ struct FailoverAudioSourceTests {
         let omi = FakeConnectableAudioSource()
         let mic = FakeSimpleAudioSource()
         let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
-        await failover.stop()                              // safe unstarted
         let stream = try await failover.start()
         await failover.stop()
+        await failover.stop()   // idempotent
         var it = stream.makeAsyncIterator()
-        #expect(await it.next() == nil)                   // stream finished
-        await failover.stop()                              // idempotent
-        _ = try await failover.start()                     // restartable
+        #expect(await it.next() == nil)   // stream finished on stop
+    }
+
+    @Test func wearableRecoveryDuringFailingMicStartIsNotClobbered() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)     // mic-first
+        await omi.setState(.streaming)
+        #expect(await changes.next()?.source == .omi)          // first upgrade
+        await mic.setStartError(Boom())
+        await mic.setStartDelay(100)                           // the fallback will suspend then throw
+        await omi.setState(.disconnected)                      // grace (80 ms) → mic start suspends
+        try await Task.sleep(for: .milliseconds(120))          // inside the suspended mic start
+        await omi.setState(.streaming)                         // wearable recovers mid-suspension
+        try await Task.sleep(for: .milliseconds(300))          // mic throw resolves in here
+        #expect(await failover.activeSourceType == .omi)       // live wearable kept, not clobbered
+        await failover.stop()
+    }
+
+    @Test func retryPhoneMicActivatesFromWaiting() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.reason == .captureUnavailable)
+        await mic.setStartError(nil)                   // the foreground made the mic legal again
+        await failover.retryPhoneMic()
+        #expect(await changes.next() == AudioSourceChange(source: .phoneMic, reason: .initial))
+        #expect(await failover.activeSourceType == .phoneMic)
+        await failover.stop()
+    }
+
+    @Test func retryPhoneMicNoOpsWhenSourceActiveOrStopped() async throws {
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)
+        await failover.retryPhoneMic()                 // active source → no-op
+        #expect(await mic.startCount == 1)
+        await failover.stop()
+        await failover.retryPhoneMic()                 // stopped → no-op
+        #expect(await mic.startCount == 1)
+    }
+
+    @Test func retryRacingStreamingLeavesWearableActive() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.reason == .captureUnavailable)
+        await mic.setStartError(nil)
+        await mic.setStartDelay(100)                   // suspend the retry mid-start
+        let retryTask = Task { await failover.retryPhoneMic() }
+        try await Task.sleep(for: .milliseconds(30))
+        await omi.setState(.streaming)                 // rescue wins during the suspension
+        #expect(await changes.next()?.source == .omi)
+        await retryTask.value
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await failover.activeSourceType == .omi)   // retry undone, no clobber
+        #expect(await mic.stopCount >= 1)                  // orphaned mic start stopped
         await failover.stop()
     }
 }

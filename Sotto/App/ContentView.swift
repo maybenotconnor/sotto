@@ -58,6 +58,10 @@ struct ContentView: View {
             // SPEC: leftovers drain on next resume/foreground — also releases jobs that were
             // gated on Wi-Fi-only uploads while the user was away from home.
             Task { await model.queue?.drain() }
+            // Redesign spec §2: the mic cannot START in the background, so a waiting
+            // session retries capture the moment the app is foreground again. Once per
+            // transition — onChange fires once per phase change.
+            Task { await model.pipeline?.retryCaptureIfWaiting() }
         }
     }
 }

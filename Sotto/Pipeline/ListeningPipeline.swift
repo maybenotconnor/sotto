@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import os
+import UIKit
 
 /// MainActor facade over the audio pipeline: owns source start/stop transitions and
 /// forwards every chunk to the RecorderStateMachine actor, publishing its snapshots.
@@ -18,6 +20,9 @@ final class ListeningPipeline {
         case silence
         case interrupted
     }
+
+    /// Spec §3: the one tunable place for the waiting-notification delay.
+    static let waitingNotificationDelay: TimeInterval = 30
 
     /// Why the pipeline is currently .interrupted — drives both the Live Activity/event-log
     /// label and whether a fallback "resume?" notification makes sense (a user-initiated
@@ -46,11 +51,24 @@ final class ListeningPipeline {
     /// a `SourceSwitchingAudioSource` (FailoverAudioSource) it tracks `sourceChanges()`.
     private(set) var activeSourceType: AudioSourceType?
 
+    /// Spec §2: the session claims to run but nothing is capturing — the waiting state.
+    /// Derived, never persisted. Only a switching (wearable-paired) source can wait: a
+    /// plain phone-mic session parks via existing paths when its mic dies.
+    var isWaitingForCapture: Bool {
+        source is any SourceSwitchingAudioSource && activeSourceType == nil
+            && (status == .listening || status == .recording || status == .silence)
+    }
+
     private let source: any AudioSource
     private let recorder: any SegmentRecording
     private let heartbeat: HeartbeatStore?
     private let liveActivity: (any LiveActivityControlling)?
     private let notifications: (any NotificationScheduling)?
+    private let logger = Logger(subsystem: "app.decanlys.sotto", category: "Failover")
+    /// Test seam for the foreground-only authorization gate (spec §3): a hosted test
+    /// run's UIApplication state is not reliably .active, so tests inject a fixed
+    /// answer instead of inheriting the host's.
+    var isAppActive: @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }
     private var pumpTask: Task<Void, Never>?
     private var sourceEventTask: Task<Void, Never>?
     private var isTransitioning = false
@@ -121,9 +139,18 @@ final class ListeningPipeline {
                 activeSourceType = source.sourceType
                 Task { await recorder.setActiveSource(source.sourceType) }
             }
-            await notifications?.requestAuthorizationIfNeeded()
+            // Spec §3: the authorization prompt only exists in the foreground; a cold
+            // background start defers it to the next foreground session start.
+            if isAppActive() {
+                await notifications?.requestAuthorizationIfNeeded()
+            }
             sessionStartedAt = Date()
             liveActivity?.sessionStarted(at: Date())
+            // The initial activation's own push may have raced ahead of sessionStarted and
+            // been dropped by the controller's nil-activity guard — re-push now that the
+            // activity exists, so a session that started straight into waiting shows
+            // "Waiting", not the hardcoded initial "Listening".
+            pushLiveActivitySource()
         } catch {
             status = .idle
             // The source never started, so no change is mid-handleSourceChange; cancellation
@@ -260,6 +287,14 @@ final class ListeningPipeline {
         }
     }
 
+    /// Spec §2 foreground retry hook: called on scenePhase .active — once per transition,
+    /// never in a loop. Skips paused/interrupted (their recovery is the resume path).
+    func retryCaptureIfWaiting() async {
+        guard isWaitingForCapture,
+              let switching = source as? any SourceSwitchingAudioSource else { return }
+        await switching.retryPhoneMic()
+    }
+
     private enum HaltMode { case stop, park(HaltReason) }
 
     private func performHalt(_ mode: HaltMode) async {
@@ -290,6 +325,7 @@ final class ListeningPipeline {
             log("Stopped")
             liveActivity?.sessionEnded()
             await notifications?.cancelPausedNotification()
+            await notifications?.cancelCaptureUnavailableNotification()
         case .park(let reason):
             // Set BEFORE apply(): apply()'s status-change branch reads haltReason to pick
             // the Live Activity label for the (about to be entered) .interrupted status.
@@ -297,6 +333,10 @@ final class ListeningPipeline {
             let snapshot = await recorder.markInterrupted()
             apply(snapshot)
             log(reason == .userPause ? "Paused by you" : "Paused — call")
+            await notifications?.cancelCaptureUnavailableNotification()
+            // Re-arm across a park: a resumed session that hits a NEW gap is a new waiting
+            // entry and must be able to notify again (spec §3 re-arm semantics).
+            hasNotifiedCaptureUnavailable = false
             if reason == .systemInterruption {
                 // A user-initiated pause needs no fallback nag — they know they paused it.
                 await notifications?.schedulePausedNotification()
@@ -336,12 +376,25 @@ final class ListeningPipeline {
     /// finalize-wise when nothing is open), but the log line and user-facing notification are
     /// gated on the source actually having changed, so a repeat never double-notifies.
     private func handleSourceChange(_ change: AudioSourceChange) async {
+        // Standing observability (failover-redesign spec §5, see FailoverAudioSource.logger):
+        // the app state at the moment of each source change is the one fact user reports
+        // can't reliably supply — background mic starts are expected to fail, foreground
+        // ones are not.
+        let appState = switch UIApplication.shared.applicationState {
+        case .active: "active"
+        case .inactive: "inactive"
+        case .background: "background"
+        @unknown default: "unknown"
+        }
+        logger.notice(
+            "pipeline saw \(String(describing: change.reason), privacy: .public) → \(change.source?.displayName ?? "nothing", privacy: .public), app \(appState, privacy: .public), status \(String(describing: self.status), privacy: .public)")
         let previousSource = activeSourceType
         switch change.reason {
         case .initial:
             if let source = change.source {
                 activeSourceType = source
                 hasNotifiedCaptureUnavailable = false
+                await notifications?.cancelCaptureUnavailableNotification()
                 await recorder.setActiveSource(source)
                 log("Capturing via \(source.displayName)")
             }
@@ -350,6 +403,7 @@ final class ListeningPipeline {
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
             hasNotifiedCaptureUnavailable = false
+            await notifications?.cancelCaptureUnavailableNotification()
             apply(snapshot)
             if previousSource != source {
                 // `self.source.sourceType` is the preferred wearable's type on a switching
@@ -363,17 +417,29 @@ final class ListeningPipeline {
             let snapshot = await recorder.rollover(to: source)
             activeSourceType = source
             hasNotifiedCaptureUnavailable = false
+            await notifications?.cancelCaptureUnavailableNotification()
             apply(snapshot)
             if previousSource != source {
-                log("\(self.source.sourceType.displayName) reconnected")
+                log(source == self.source.sourceType
+                    ? "\(source.displayName) connected"
+                    : "Capturing via \(source.displayName)")
             }
         case .captureUnavailable:
+            let previous = activeSourceType
             activeSourceType = nil
+            if let previous {
+                // Finalize any open segment (spec §2): the captured audio belongs to the
+                // source that captured it, and the header must not keep a live
+                // "Recording…" over dead capture.
+                let snapshot = await recorder.rollover(to: previous)
+                apply(snapshot)
+            }
             if !hasNotifiedCaptureUnavailable {
                 hasNotifiedCaptureUnavailable = true
-                log("Nothing capturing — \(source.sourceType.displayName) gone and mic unavailable")
+                log("Nothing capturing — waiting for \(source.sourceType.displayName) or the iPhone mic")
                 await notifications?.scheduleCaptureUnavailableNotification(
-                    deviceName: source.sourceType.displayName)
+                    deviceName: source.sourceType.displayName,
+                    delay: Self.waitingNotificationDelay)
             }
         }
         pushLiveActivitySource()
@@ -452,8 +518,8 @@ final class ListeningPipeline {
     func activityPhase(for status: Status) -> SottoActivityAttributes.Phase? {
         switch status {
         case .idle, .starting: nil
-        case .listening, .silence: .listening
-        case .recording: .recording
+        case .listening, .silence: isWaitingForCapture ? .waiting : .listening
+        case .recording: isWaitingForCapture ? .waiting : .recording
         case .interrupted: haltReason == .userPause ? .pausedByUser : .pausedBySystem
         }
     }

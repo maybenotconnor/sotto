@@ -8,7 +8,7 @@ struct SottoActivityAttributes: ActivityAttributes {
     /// tint, label) from this; raw-value Codable is the wire format across the
     /// app/widget process boundary — don't rename cases casually.
     enum Phase: String, Codable, Hashable {
-        case listening, recording, pausedByUser, pausedBySystem
+        case listening, recording, pausedByUser, pausedBySystem, waiting
 
         var isPaused: Bool { self == .pausedByUser || self == .pausedBySystem }
     }
