@@ -305,7 +305,10 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
             }
         } catch {
             logger.error("phone mic start FAILED: \(String(describing: error), privacy: .public)")
-            guard generation == gen, started else { return }
+            // Same re-check as the success path: a wearable that activated during the
+            // suspended mic start is LIVE — a mic failure then must not clobber it into
+            // a false "nothing capturing" (it would stick: .streaming is edge-triggered).
+            guard generation == gen, started, activeSourceType == expectedSource else { return }
             graceTask?.cancel(); graceTask = nil   // no timers run while waiting (spec §1)
             activeSourceType = nil
             emit(AudioSourceChange(source: nil, reason: .captureUnavailable))
