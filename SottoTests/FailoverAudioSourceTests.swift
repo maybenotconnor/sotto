@@ -199,4 +199,24 @@ struct FailoverAudioSourceTests {
         var it = stream.makeAsyncIterator()
         #expect(await it.next() == nil)   // stream finished on stop
     }
+
+    @Test func wearableRecoveryDuringFailingMicStartIsNotClobbered() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)     // mic-first
+        await omi.setState(.streaming)
+        #expect(await changes.next()?.source == .omi)          // first upgrade
+        await mic.setStartError(Boom())
+        await mic.setStartDelay(100)                           // the fallback will suspend then throw
+        await omi.setState(.disconnected)                      // grace (80 ms) → mic start suspends
+        try await Task.sleep(for: .milliseconds(120))          // inside the suspended mic start
+        await omi.setState(.streaming)                         // wearable recovers mid-suspension
+        try await Task.sleep(for: .milliseconds(300))          // mic throw resolves in here
+        #expect(await failover.activeSourceType == .omi)       // live wearable kept, not clobbered
+        await failover.stop()
+    }
 }

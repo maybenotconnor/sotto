@@ -309,6 +309,12 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
             // suspended mic start is LIVE — a mic failure then must not clobber it into
             // a false "nothing capturing" (it would stick: .streaming is edge-triggered).
             guard generation == gen, started, activeSourceType == expectedSource else { return }
+            if activeSourceType == sourceType, lastWearableState == .streaming {
+                // The wearable recovered during the suspended (failed) mic start — that
+                // .streaming edge is consumed and won't re-fire. Keep the live wearable
+                // active instead of clobbering it into a stuck "nothing capturing".
+                return
+            }
             graceTask?.cancel(); graceTask = nil   // no timers run while waiting (spec §1)
             activeSourceType = nil
             emit(AudioSourceChange(source: nil, reason: .captureUnavailable))
