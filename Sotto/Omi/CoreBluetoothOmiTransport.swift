@@ -50,6 +50,10 @@ final class CoreBluetoothOmiTransport: NSObject, OmiTransport, @unchecked Sendab
     /// No explicit backoff: retry cadence is gated by the BLE stack's own connect latency,
     /// matching the existing pending-retry pattern (spec §4).
     private func retryNegotiation(_ peripheral: CBPeripheral, because reason: String) {
+        // Stale-callback gate (same rationale as didDisconnectPeripheral's guard, see the
+        // class header): a late discovery/read callback from a connection that already
+        // dropped must not cancel the pending reconnect that disconnect handling issued.
+        guard didConnectThisSession else { return }
         logger.error("negotiation failed: \(reason, privacy: .public) — reconnecting")
         audioCharacteristic = nil
         central?.cancelPeripheralConnection(peripheral)
