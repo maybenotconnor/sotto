@@ -64,6 +64,7 @@ final class ListeningPipeline {
     private let heartbeat: HeartbeatStore?
     private let liveActivity: (any LiveActivityControlling)?
     private let notifications: (any NotificationScheduling)?
+    private let logger = Logger(subsystem: "app.decanlys.sotto", category: "Failover")
     /// Test seam for the foreground-only authorization gate (spec §3): a hosted test
     /// run's UIApplication state is not reliably .active, so tests inject a fixed
     /// answer instead of inheriting the host's.
@@ -145,6 +146,11 @@ final class ListeningPipeline {
             }
             sessionStartedAt = Date()
             liveActivity?.sessionStarted(at: Date())
+            // The initial activation's own push may have raced ahead of sessionStarted and
+            // been dropped by the controller's nil-activity guard — re-push now that the
+            // activity exists, so a session that started straight into waiting shows
+            // "Waiting", not the hardcoded initial "Listening".
+            pushLiveActivitySource()
         } catch {
             status = .idle
             // The source never started, so no change is mid-handleSourceChange; cancellation
@@ -380,7 +386,7 @@ final class ListeningPipeline {
         case .background: "background"
         @unknown default: "unknown"
         }
-        Logger(subsystem: "app.decanlys.sotto", category: "Failover").notice(
+        logger.notice(
             "pipeline saw \(String(describing: change.reason), privacy: .public) → \(change.source?.displayName ?? "nothing", privacy: .public), app \(appState, privacy: .public), status \(String(describing: self.status), privacy: .public)")
         let previousSource = activeSourceType
         switch change.reason {

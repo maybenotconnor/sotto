@@ -4,7 +4,10 @@ import UIKit
 /// The home header's state machine (moved from ContentView's HomeScreen, made internal
 /// and purely derived so it is unit-testable). One segment-open case takes priority over
 /// the raw pipeline status so the card morphs into "Recording…" instead of growing a
-/// second header-like row (M9 decision, preserved by the 2026-07-10 header refresh).
+/// second header-like row (M9 decision, preserved by the 2026-07-10 header refresh). The
+/// waiting case (capture lost on a wearable-paired session) outranks BOTH — a stale
+/// open-segment date must not keep a live 'Recording…' over dead capture (2026-07-23
+/// failover redesign).
 enum HeaderState: Equatable {
     case idle
     case starting
