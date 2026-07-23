@@ -166,8 +166,11 @@ struct ConversationDetailView: View {
     /// summary was genuinely expected and is absent: the transcript parsed, has no `## Summary`,
     /// is long enough that generation wasn't skipped by design (`minimumWords`), AND this device
     /// can generate summaries at all — on non-Apple-Intelligence hardware the whole feature is
-    /// absent, so a missing summary explains itself. Static + parameterized for testability.
-    static func showsSummaryUnavailableNote(file: TranscriptFile?, modelAvailable: Bool) -> Bool {
+    /// absent, so a missing summary explains itself. Static + parameterized for testability;
+    /// `nonisolated` because the View's @MainActor inference otherwise reaches the split
+    /// closure, whose runtime isolation assert traps when the (non-MainActor) test suite
+    /// calls this off-main under parallel execution — pure function, no isolation needed.
+    nonisolated static func showsSummaryUnavailableNote(file: TranscriptFile?, modelAvailable: Bool) -> Bool {
         guard modelAvailable, let file, file.summary == nil else { return false }
         let words = file.transcriptBody.split { $0.isWhitespace || $0.isNewline }.count
         return words >= FoundationModelsPostProcessor.minimumWords

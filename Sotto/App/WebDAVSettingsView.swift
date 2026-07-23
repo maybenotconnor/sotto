@@ -174,8 +174,11 @@ struct WebDAVSettingsView: View {
         formNote = "Server forgotten."
     }
 
-    /// Status-line copy for the executor's last outcome (design §5).
-    static func describe(_ status: WebDAVStatus) -> String {
+    /// Status-line copy for the executor's last outcome (design §5). `nonisolated`: pure
+    /// label helper — same rule as SettingsView.deviceStatusLabel and
+    /// ConversationDetailView.showsSummaryUnavailableNote (View @MainActor inference must
+    /// not leak into functions tests may call off-main).
+    nonisolated static func describe(_ status: WebDAVStatus) -> String {
         switch status {
         case .idle:
             "No backups attempted yet"
