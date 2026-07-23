@@ -219,4 +219,56 @@ struct FailoverAudioSourceTests {
         #expect(await failover.activeSourceType == .omi)       // live wearable kept, not clobbered
         await failover.stop()
     }
+
+    @Test func retryPhoneMicActivatesFromWaiting() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.reason == .captureUnavailable)
+        await mic.setStartError(nil)                   // the foreground made the mic legal again
+        await failover.retryPhoneMic()
+        #expect(await changes.next() == AudioSourceChange(source: .phoneMic, reason: .initial))
+        #expect(await failover.activeSourceType == .phoneMic)
+        await failover.stop()
+    }
+
+    @Test func retryPhoneMicNoOpsWhenSourceActiveOrStopped() async throws {
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.source == .phoneMic)
+        await failover.retryPhoneMic()                 // active source → no-op
+        #expect(await mic.startCount == 1)
+        await failover.stop()
+        await failover.retryPhoneMic()                 // stopped → no-op
+        #expect(await mic.startCount == 1)
+    }
+
+    @Test func retryRacingStreamingLeavesWearableActive() async throws {
+        struct Boom: Error {}
+        let omi = FakeConnectableAudioSource()
+        let mic = FakeSimpleAudioSource()
+        await mic.setStartError(Boom())
+        let failover = FailoverAudioSource(wearable: omi, phoneMic: mic, config: fastConfig)
+        var changes = await collectChanges(failover)
+        _ = try await failover.start()
+        #expect(await changes.next()?.reason == .captureUnavailable)
+        await mic.setStartError(nil)
+        await mic.setStartDelay(100)                   // suspend the retry mid-start
+        let retryTask = Task { await failover.retryPhoneMic() }
+        try await Task.sleep(for: .milliseconds(30))
+        await omi.setState(.streaming)                 // rescue wins during the suspension
+        #expect(await changes.next()?.source == .omi)
+        await retryTask.value
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await failover.activeSourceType == .omi)   // retry undone, no clobber
+        #expect(await mic.stopCount >= 1)                  // orphaned mic start stopped
+        await failover.stop()
+    }
 }

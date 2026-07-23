@@ -18,6 +18,10 @@ struct AudioSourceChange: Sendable, Equatable {
 protocol SourceSwitchingAudioSource: AudioSource {
     func sourceChanges() async -> AsyncStream<AudioSourceChange>
     var activeSourceType: AudioSourceType? { get async }
+    /// Redesign spec §1: re-attempt phone-mic activation after a `.captureUnavailable`
+    /// gap. No-op unless started with nothing capturing. Invoked (via ListeningPipeline)
+    /// once per app-foreground transition — never in a loop.
+    func retryPhoneMic() async
 }
 
 /// Route-change forwarding seam (AppModel wiring, Task 10).
@@ -172,6 +176,14 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
         guard activeSourceType == .phoneMic,
               let handler = phoneMic as? any RouteChangeHandling else { return }
         try await handler.rebuildTap()
+    }
+
+    /// Spec §1: routed through the hardened `activatePhoneMic`, so a wearable that
+    /// activates during the awaited mic start wins and the orphaned start is undone.
+    func retryPhoneMic() async {
+        guard started, activeSourceType == nil else { return }
+        logger.notice("retrying phone mic (foreground)")
+        await activatePhoneMic(reason: .initial)
     }
 
     private func removeChangeContinuation(_ id: UUID) { changeContinuations[id] = nil }
