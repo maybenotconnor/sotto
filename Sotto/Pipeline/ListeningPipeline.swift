@@ -376,10 +376,10 @@ final class ListeningPipeline {
     /// finalize-wise when nothing is open), but the log line and user-facing notification are
     /// gated on the source actually having changed, so a repeat never double-notifies.
     private func handleSourceChange(_ change: AudioSourceChange) async {
-        // Diagnostics for the "no iPhone-mic fallback" mystery (2026-07-21, see
-        // FailoverAudioSource.logger): the app state at the moment of each change is the
-        // fact user memory can't reliably supply — background mic starts are expected to
-        // fail, foreground ones are not.
+        // Standing observability (failover-redesign spec §5, see FailoverAudioSource.logger):
+        // the app state at the moment of each source change is the one fact user reports
+        // can't reliably supply — background mic starts are expected to fail, foreground
+        // ones are not.
         let appState = switch UIApplication.shared.applicationState {
         case .active: "active"
         case .inactive: "inactive"

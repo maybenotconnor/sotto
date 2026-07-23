@@ -60,9 +60,10 @@ actor FailoverAudioSource: SourceSwitchingAudioSource {
     private let wearable: any ConnectableAudioSource
     private let phoneMic: any AudioSource
     private let config: FailoverConfig
-    /// Diagnostics for the reported "no iPhone-mic fallback while foregrounded" mystery
-    /// (2026-07-21): the event log that narrates these decisions is not surfaced anywhere,
-    /// so mirror every failover decision to os_log until the root cause is confirmed.
+    /// Standing observability (failover-redesign spec §5): every failover decision mirrors
+    /// to os_log because the in-app event log is not surfaced anywhere, and this subsystem's
+    /// one confirmed field bug (the 2026-07 mic-fallback zombie) was only diagnosable from a
+    /// single natural occurrence because this trail existed. Keep it.
     private let logger = Logger(subsystem: "app.decanlys.sotto", category: "Failover")
 
     private(set) var activeSourceType: AudioSourceType?
