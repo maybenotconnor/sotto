@@ -158,6 +158,7 @@ final class ListeningPipeline {
             // in performHalt exists for bodies already resumed, which can't exist here).
             sourceEventTask?.cancel()
             sourceEventTask = nil
+            logger.error("Start failed: \(String(describing: error), privacy: .public)")
             log("Start failed: \(error)")
         }
         isTransitioning = false
@@ -255,6 +256,9 @@ final class ListeningPipeline {
             status = .interrupted
             sourceEventTask?.cancel()   // see start()'s catch: no body can be in flight here
             sourceEventTask = nil
+            // os_log too: eventLog is in-memory only, and a failed background resume is
+            // exactly the case whose only forensics are a sysdiagnose/log archive.
+            logger.error("Resume failed: \(String(describing: error), privacy: .public)")
             log("Resume failed: \(error)")
         }
         isTransitioning = false
@@ -283,6 +287,12 @@ final class ListeningPipeline {
         switch status {
         case .idle: await start()
         case .interrupted: await resumeFromInterruption()
+        // Mid-transition tap: the instruction it duplicates is already in flight, and no
+        // activity exists during an initial start's .starting window — so this can only be
+        // an impatient re-tap on a still-"Paused" card. Falling through to pauseByUser()
+        // would set pendingPark and re-park the session the moment the resume it was
+        // aimed at succeeds.
+        case .starting: break
         default: await pauseByUser()
         }
     }

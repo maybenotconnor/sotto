@@ -61,6 +61,9 @@ actor SlowStartAudioSource: AudioSource {
     func releaseStart() {
         startGate?.resume()
         startGate = nil
+        // Re-arm the request latch so a second start/release cycle can be awaited (the
+        // resume-path tests gate the RESTART, not just the initial start).
+        startWasRequested = false
     }
 
     func stop() {

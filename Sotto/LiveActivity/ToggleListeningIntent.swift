@@ -20,11 +20,15 @@ final class IntentHandlers {
     }
 }
 
-/// AudioRecordingIntent (iOS 18+) is Apple's sanctioned mechanism for starting/stopping
-/// recording from a Live Activity — the ONLY reliable way to restart the mic without
-/// foregrounding the app (SPEC "Live Activity" job 1). The system runs perform() in the
-/// APP process (launching it in the background if needed).
-struct ToggleListeningIntent: AudioRecordingIntent {
+/// Two conformances, two distinct jobs (SPEC "Live Activity" job 1):
+/// - LiveActivityIntent routes perform() to the APP process (launching it in the
+///   background if needed). AudioRecordingIntent alone does NOT do this — it is
+///   `: SystemIntent`, and without LiveActivityIntent the system runs perform() in the
+///   WIDGET extension, where IntentHandlers is deliberately empty, so every lock-screen
+///   tap was a sub-millisecond no-op (device-log-proven, 2026-07-23).
+/// - AudioRecordingIntent (iOS 18+) grants the background mic capability: the system
+///   permits restarting recording without foregrounding the app and shows the indicator.
+struct ToggleListeningIntent: AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Pause or resume listening"
 
     // @MainActor: perform() itself must share IntentHandlers' isolation domain — reading a
