@@ -254,6 +254,29 @@ struct InterruptionTests {
         #expect(await notifications.scheduled == 0)  // and no spurious fallback notification
     }
 
+    @Test func secondIntentTapDuringResumeTransitionDoesNotRePark() async throws {
+        let source = SlowStartAudioSource()
+        let pipeline = ListeningPipeline(
+            source: source, recorder: FakeRecorder(), liveActivity: nil)
+
+        async let starting: Void = pipeline.start()
+        await source.waitUntilStartRequested()
+        await source.releaseStart()
+        await starting
+        await pipeline.pauseByUser()
+        #expect(pipeline.status == .interrupted)
+
+        async let resuming: Void = pipeline.toggleFromIntent()   // tap 1 → resume
+        await source.waitUntilStartRequested()                   // resume gated open mid-start
+        #expect(pipeline.status == .starting)
+        await pipeline.toggleFromIntent()                        // tap 2: impatient re-tap
+        await source.releaseStart()
+        await resuming
+
+        #expect(pipeline.status == .listening)   // tap 2 must not convert into a re-park
+        #expect(pipeline.haltReason == nil)
+    }
+
     @Test func sessionStartedAtTracksLifecycle() async throws {
         let pipeline = ListeningPipeline(source: FakeAudioSource(), recorder: FakeRecorder())
         #expect(pipeline.sessionStartedAt == nil)
