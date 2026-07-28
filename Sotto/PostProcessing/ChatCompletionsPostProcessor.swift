@@ -67,8 +67,6 @@ struct ChatCompletionsPostProcessor: PostProcessor {
     /// Full transcript up to ~150k tokens (fits Claude Haiku 4.5's 200K window with
     /// headroom); ≈11 h of continuous speech, so real conversations never truncate.
     static let maximumCharacters = 600_000
-    private static let headCharacters = 300_000
-    private static let tailCharacters = 300_000
     private static let omissionMarker = "\n\n[... middle of the conversation omitted ...]\n\n"
 
     private static let logger = Logger(subsystem: "app.decanlys.sotto", category: "PostProcessing")
@@ -175,7 +173,18 @@ struct ChatCompletionsPostProcessor: PostProcessor {
                 """)
             throw CloudSummaryError.badResponse(status)
         }
-        return try Self.notes(fromResponseBody: data, truncated: truncated)
+        do {
+            return try Self.notes(fromResponseBody: data, truncated: truncated)
+        } catch {
+            // Issue #14 diagnosability: a 200 whose body we can't use is otherwise
+            // indistinguishable from "no notes". Error TYPE only — never content.
+            Self.logger.error("""
+                cloud notes unusable response — host \(config.endpoint.host() ?? "?", privacy: .public), \
+                transcript \(transcript.text.count, privacy: .public) chars, \
+                error \(String(describing: error), privacy: .public)
+                """)
+            throw error
+        }
     }
 
     /// Settings "Test" button: the only way to know a BYOK key works is to use it

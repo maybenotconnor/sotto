@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Cloud-first with on-device rescue (design 2026-07-28): try `primary`; on ANY throw run
 /// `fallback` when present. Mirrors WiFiGatedService's wrapping pattern. Worst case equals
@@ -7,10 +8,18 @@ struct FallbackPostProcessor: PostProcessor {
     let primary: any PostProcessor
     let fallback: (any PostProcessor)?
 
+    private static let logger = Logger(subsystem: "app.decanlys.sotto", category: "PostProcessing")
+
     func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
         do {
             return try await primary.process(transcript: transcript, audio: audio)
         } catch {
+            // Issue #14 diagnosability: without this, "cloud configured but every summary
+            // quietly came from on-device" is invisible. Error TYPE only — never content.
+            Self.logger.notice("""
+                cloud notes failed, \(fallback == nil ? "no fallback" : "falling back to on-device", privacy: .public) — \
+                error \(String(describing: error), privacy: .public)
+                """)
             guard let fallback else { throw error }
             return try await fallback.process(transcript: transcript, audio: audio)
         }
