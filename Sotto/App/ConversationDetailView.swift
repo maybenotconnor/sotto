@@ -173,7 +173,7 @@ struct ConversationDetailView: View {
     nonisolated static func showsSummaryUnavailableNote(file: TranscriptFile?, modelAvailable: Bool) -> Bool {
         guard modelAvailable, let file, file.summary == nil else { return false }
         let words = file.transcriptBody.split { $0.isWhitespace || $0.isNewline }.count
-        return words >= FoundationModelsPostProcessor.minimumWords
+        return words >= SummaryLimits.minimumWords
     }
 
     private var metadataRow: some View {
