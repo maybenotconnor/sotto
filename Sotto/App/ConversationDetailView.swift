@@ -60,7 +60,7 @@ struct ConversationDetailView: View {
                 // markdown-parses the handful of blocks the LazyVStack materializes on screen.
                 blocks = parsed?.transcriptBlocks ?? []
                 summaryUnavailable = Self.showsSummaryUnavailableNote(
-                    file: parsed, modelAvailable: FoundationModelsPostProcessor.isModelAvailable)
+                    file: parsed, modelAvailable: model.summariesAvailable)
                 savedTitle = entry.title ?? entry.startTime.formatted(.dateTime.hour().minute())
                 editableTitle = savedTitle
                 // hasAudio is advisory (M5 review): stat the file before offering playback.
@@ -159,7 +159,7 @@ struct ConversationDetailView: View {
         transcript = parsed
         blocks = parsed?.transcriptBlocks ?? []
         summaryUnavailable = Self.showsSummaryUnavailableNote(
-            file: parsed, modelAvailable: FoundationModelsPostProcessor.isModelAvailable)
+            file: parsed, modelAvailable: model.summariesAvailable)
     }
 
     /// Issue #14: whether to show the "no summary could be generated" note. True only when a

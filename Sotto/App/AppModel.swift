@@ -478,10 +478,11 @@ final class AppModel {
     /// Best-effort notes regeneration for a just-merged conversation — M8 semantics
     /// exactly: any failure (Low Power Mode, model unavailable, transcript too short,
     /// generation error) leaves the merged file with its default heading; a merge is
-    /// never failed by its notes. Mirrors the queue's postProcessorProvider gates.
+    /// never failed by its notes. Uses the same PostProcessorFactory rule as the queue's
+    /// postProcessorProvider.
     private func regenerateNotes(dayDirectory: URL, entry: DaySegmentEntry) async {
-        guard !ProcessInfo.processInfo.isLowPowerModeEnabled,
-              FoundationModelsPostProcessor.isModelAvailable else { return }
+        guard let processor = PostProcessorFactory.make(settings: settings, keychain: KeychainStore())
+        else { return }
         let mdURL = dayDirectory.appendingPathComponent("\(entry.id).md")
         let m4aURL = dayDirectory.appendingPathComponent("\(entry.id).m4a")
         guard let file = TranscriptFile.parse(url: mdURL) else { return }
@@ -489,8 +490,7 @@ final class AppModel {
         let input = TranscriptionResult(
             text: file.transcriptBody, segments: [], duration: entry.duration,
             backend: .speechAnalyzer)
-        guard let notes = try? await FoundationModelsPostProcessor()
-            .process(transcript: input, audio: nil) else { return }
+        guard let notes = try? await processor.process(transcript: input, audio: nil) else { return }
         guard ConversationMerger.applyNotes(
             to: mdURL, notes: notes, startTime: entry.startTime) else { return }
         // Raw (unsanitized) title into the index — same divergence the transcription
@@ -598,6 +598,23 @@ final class AppModel {
     /// The executor's last outcome, for the Settings status line.
     func webdavStatus() async -> WebDAVStatus {
         await WebDAVExecutor.shared.lastOutcome
+    }
+
+    /// Whether ANY summary engine can run on this device/config — on-device Apple
+    /// Intelligence or a fully-configured cloud provider. Drives the detail view's
+    /// "no summary could be generated" note (issue #14 semantics).
+    var summariesAvailable: Bool {
+        PostProcessorFactory.summariesAvailable(settings: settings, keychain: KeychainStore())
+    }
+
+    /// Settings "Test" button for the summary provider: exercises the currently-saved
+    /// config end-to-end with a one-word request (testDeepgramKey precedent — the only
+    /// way to know a BYOK key works is to use it). User-initiated only.
+    func testSummaryProvider() async -> Bool {
+        let keychain = KeychainStore()
+        guard let config = ChatCompletionsConfig.resolve(settings: settings, keychain: keychain),
+              let key = keychain.get(config.keychainKey) else { return false }
+        return await ChatCompletionsPostProcessor.testKey(key, config: config)
     }
 
     /// M6b Settings "Test key": exercises the candidate Deepgram key against a real ~1 s
@@ -739,15 +756,11 @@ final class AppModel {
                         return SpeechAnalyzerService()
                     }
                 },
-                // M8 post-processing: on-device meeting notes only when Apple Intelligence is
-                // actually available on this device — never a download/setup affordance,
-                // never blocks a job (best-effort inside the queue itself).
+                // M8 post-processing via the single composition rule (design 2026-07-28):
+                // cloud provider with on-device rescue when configured, else on-device, else
+                // nil; Low Power Mode skips notes entirely inside the factory.
                 postProcessorProvider: {
-                    // SPEC Low Power detection — skip ANE-heavy notes generation while Low
-                    // Power Mode is on; transcripts still ship, only the best-effort notes
-                    // are skipped for this job.
-                    guard !ProcessInfo.processInfo.isLowPowerModeEnabled else { return nil }
-                    return FoundationModelsPostProcessor.isModelAvailable ? FoundationModelsPostProcessor() : nil
+                    PostProcessorFactory.make(settings: settings, keychain: keychain)
                 })
             self.queue = transcriptionQueue
 
