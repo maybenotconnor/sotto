@@ -15,6 +15,11 @@ struct SettingsView: View {
     @State private var wifiOnly = true
     @State private var deepgramKey = ""
     @State private var keyTestResult: Bool?
+    @State private var summaryBackend: SummaryBackend = .onDevice
+    @State private var summaryKey = ""
+    @State private var summaryModel = ""
+    @State private var summaryBaseURL = ""
+    @State private var summaryTestResult: Bool?
     @State private var usage: AppModel.StorageUsage?
     @State private var showPowerUser = false
     @State private var notificationStatus = "—"
@@ -33,6 +38,7 @@ struct SettingsView: View {
             listeningSection
             deviceSection
             transcriptionSection
+            summariesSection
             storageSection
             backupSection
             notificationsSection
@@ -57,6 +63,8 @@ struct SettingsView: View {
             webdavHost = settings.webdavServerURL
                 .flatMap { URL(string: $0)?.host() } ?? "Not configured"
             deepgramKey = KeychainStore().get("deepgramAPIKey") ?? ""
+            summaryBackend = settings.summaryBackend
+            loadSummaryFields()
             usage = model.storageUsage()
             let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
             notificationStatus = switch notificationSettings.authorizationStatus {
@@ -222,6 +230,74 @@ struct SettingsView: View {
         }
     }
 
+    /// Design 2026-07-28: cloud summary providers. Structurally clones transcriptionSection
+    /// (picker → per-provider config → test button → silent-fallback warning → privacy caption).
+    private var summariesSection: some View {
+        Section("Summaries") {
+            Picker("Provider", selection: $summaryBackend) {
+                ForEach(SummaryBackend.allCases, id: \.self) { backend in
+                    Text(backend.displayName).tag(backend)
+                }
+            }
+            .onChange(of: summaryBackend) { _, value in
+                model.settings.summaryBackend = value
+                summaryTestResult = nil
+                loadSummaryFields()
+            }
+            if summaryBackend == .onDevice {
+                LabeledContent("Apple Intelligence",
+                               value: FoundationModelsPostProcessor.isModelAvailable
+                                   ? "Available" : "Not available on this device")
+            } else {
+                SecureField("API key", text: $summaryKey)
+                    .onChange(of: summaryKey) { _, _ in summaryTestResult = nil }
+                    .onSubmit { persistSummaryKey() }
+                TextField("Model", text: $summaryModel,
+                          prompt: Text(summaryBackend.defaultModel ?? "model ID (required)"))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onChange(of: summaryModel) { _, value in
+                        model.settings.setSummaryModel(value.isEmpty ? nil : value, for: summaryBackend)
+                        summaryTestResult = nil
+                    }
+                if summaryBackend == .custom {
+                    TextField("Endpoint URL", text: $summaryBaseURL,
+                              prompt: Text("https://host/v1"))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .onChange(of: summaryBaseURL) { _, value in
+                            model.settings.summaryCustomBaseURL = value.isEmpty ? nil : value
+                            summaryTestResult = nil
+                        }
+                }
+                HStack {
+                    Button("Test") {
+                        Task {
+                            persistSummaryKey()   // testing an untyped-submitted key must still work
+                            summaryTestResult = await model.testSummaryProvider()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(summaryKey.isEmpty)
+                    if let result = summaryTestResult {
+                        Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(result ? .green : .red)
+                    }
+                }
+                if summaryKey.isEmpty {
+                    // Surfaces the factory's silent fallback (it requires a key) — without this
+                    // the picker would look like it's doing something that it isn't.
+                    Label("No API key — on-device summaries are used until a key is added.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Text("Transcripts (text only — never audio) are sent to \(summaryBackend.displayName) under your account. If the provider can't be reached, notes are generated on-device.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var storageSection: some View {
         Section("Storage") {
             Picker("Keep audio", selection: $retention) {
@@ -335,6 +411,21 @@ struct SettingsView: View {
     private func persistKey() {
         if deepgramKey.isEmpty { KeychainStore().delete("deepgramAPIKey") }
         else { KeychainStore().set(deepgramKey, for: "deepgramAPIKey") }
+    }
+
+    /// Re-reads the per-provider fields when the picker changes providers — each provider
+    /// keeps its own key slot and model override, so nothing is lost by switching.
+    private func loadSummaryFields() {
+        summaryKey = summaryBackend.keychainKey.flatMap { KeychainStore().get($0) } ?? ""
+        summaryModel = model.settings.summaryModelOverride(for: summaryBackend) ?? ""
+        summaryBaseURL = model.settings.summaryCustomBaseURL ?? ""
+    }
+
+    /// Keychain write on submit/test only, not per keystroke (persistKey precedent).
+    private func persistSummaryKey() {
+        guard let keychainKey = summaryBackend.keychainKey else { return }
+        if summaryKey.isEmpty { KeychainStore().delete(keychainKey) }
+        else { KeychainStore().set(summaryKey, for: keychainKey) }
     }
 
     private var aboutSection: some View {
