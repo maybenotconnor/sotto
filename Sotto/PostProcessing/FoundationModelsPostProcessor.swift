@@ -18,10 +18,6 @@ struct FoundationModelsPostProcessor: PostProcessor {
     private static let headCharacters = 5_000
     private static let tailCharacters = 5_000
     private static let omissionMarker = "\n\n[... middle of the conversation omitted ...]\n\n"
-    /// Internal (not private): the detail view shares this threshold to decide whether a
-    /// missing summary is EXPECTED (transcript too short — no note) or a generation failure
-    /// worth explaining ("no summary could be generated", issue #14).
-    static let minimumWords = 25
 
     /// Diagnostics for issue #14 (long/merged conversations silently get no summary, and
     /// re-transcribe doesn't fix it). This is the single choke point BOTH the merge path
@@ -56,7 +52,7 @@ struct FoundationModelsPostProcessor: PostProcessor {
     func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
         guard Self.isModelAvailable else { throw PostProcessingError.modelUnavailable }
         let words = transcript.text.split { $0.isWhitespace || $0.isNewline }
-        guard words.count >= Self.minimumWords else { throw PostProcessingError.transcriptTooShort }
+        guard words.count >= SummaryLimits.minimumWords else { throw PostProcessingError.transcriptTooShort }
 
         let (excerpt, truncated) = Self.promptExcerpt(for: transcript.text)
         let notes = try await Self.generateNotes(

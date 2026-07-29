@@ -18,6 +18,12 @@ enum PostProcessingError: Error {
     case transcriptTooShort
 }
 
+/// Shared by every summary engine AND the detail view's "was a summary expected?"
+/// check (issue #14) — single source of truth for the skip-short-transcripts rule.
+enum SummaryLimits {
+    static let minimumWords = 25
+}
+
 protocol PostProcessor: Sendable {
     func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult
 }
