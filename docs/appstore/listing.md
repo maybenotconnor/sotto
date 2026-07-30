@@ -1,8 +1,10 @@
 # App Store listing copy — v1.0 draft
 
-> **Gate:** D13 (name knock-out: App Store search + USPTO on "Sotto") is still open.
-> All copy below is name-portable — the name appears only where marked, so a rename
-> is a find-and-replace, not a rewrite.
+> **D13 status (2026-07-30):** App Store knock-out done — the "Sotto" shelf is
+> crowded (three same-category apps plus sotto.to; findings on #21) and the
+> decision is to **keep the name** and accept that. A USPTO TESS search remains
+> before submission. Copy stays name-portable regardless: a rename is a
+> find-and-replace, not a rewrite.
 >
 > Positioning per `docs/SPEC.md` (adopted 2026-07-04): meeting-notetaker frame,
 > user-initiated session with background continuation. Never "records everything
