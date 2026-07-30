@@ -34,13 +34,25 @@ struct ChatCompletionsConfig: Sendable, Equatable {
     /// "http://host/v1" → ".../v1/chat/completions"; a pasted full URL passes through.
     /// Requires http(s) + host: `URL(string:)` reads "myserver.local:8080/v1" as scheme
     /// "myserver.local", which would otherwise fail only at request time.
+    /// Cleartext http is allowed only where ATS permits it (IP literals, .local,
+    /// single-label hosts — the Ollama-on-LAN cases); to a qualified hostname the OS
+    /// would block the request and the on-device fallback would mask the failure.
     static func customEndpoint(fromBase base: String) -> URL? {
         var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") { trimmed.removeLast() }
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https", url.host() != nil else { return nil }
+              let host = url.host(),
+              scheme == "https" || (scheme == "http" && isCleartextExemptHost(host))
+        else { return nil }
         if url.path.hasSuffix("/chat/completions") { return url }
         return url.appending(path: "chat/completions")
+    }
+
+    private static func isCleartextExemptHost(_ host: String) -> Bool {
+        if host.lowercased().hasSuffix(".local") { return true }
+        if !host.contains(".") { return true }   // single-label (localhost) or IPv6 literal
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        return labels.count == 4 && labels.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
 }
 

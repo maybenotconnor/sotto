@@ -83,6 +83,21 @@ struct ChatCompletionsPostProcessorTests {
         #expect(Config.customEndpoint(fromBase: "https://") == nil)
     }
 
+    @Test func customEndpointRestrictsCleartextToATSExemptHosts() {
+        typealias Config = ChatCompletionsConfig
+        // ATS ignores IP literals, .local, and single-label hosts — cleartext works there.
+        #expect(Config.customEndpoint(fromBase: "http://192.168.1.5:11434/v1") != nil)
+        #expect(Config.customEndpoint(fromBase: "http://[::1]:11434/v1") != nil)
+        #expect(Config.customEndpoint(fromBase: "http://mymac.local:11434/v1") != nil)
+        #expect(Config.customEndpoint(fromBase: "http://MyMac.LOCAL:11434/v1") != nil)
+        // Cleartext to a qualified hostname is OS-blocked at request time and the
+        // on-device fallback would mask it — reject it up front instead.
+        #expect(Config.customEndpoint(fromBase: "http://nas.home.arpa/v1") == nil)
+        #expect(Config.customEndpoint(fromBase: "http://api.example.com/v1") == nil)
+        // The same hosts are fine over https.
+        #expect(Config.customEndpoint(fromBase: "https://nas.home.arpa/v1") != nil)
+    }
+
     // MARK: excerpt cap
 
     @Test func excerptPassesThroughUnderCap() {

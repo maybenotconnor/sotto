@@ -295,7 +295,7 @@ struct SettingsView: View {
                           ChatCompletionsConfig.customEndpoint(fromBase: summaryBaseURL) == nil {
                     // Same silent fallback, other missing half: the factory also rejects a
                     // custom endpoint it can't validate.
-                    Label("Endpoint must be a full http(s) URL — on-device summaries are used until it's fixed.",
+                    Label("Endpoint must be a full https URL (plain http works only for local addresses like 192.168.1.5 or mymac.local) — on-device summaries are used until it's fixed.",
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
