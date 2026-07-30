@@ -67,6 +67,22 @@ struct ChatCompletionsPostProcessorTests {
         #expect(ChatCompletionsConfig.resolve(settings: s, keychain: keychain) == nil)
     }
 
+    @Test func customEndpointValidatesAndNormalizes() {
+        typealias Config = ChatCompletionsConfig
+        // Trailing slashes never double-append the path.
+        #expect(Config.customEndpoint(fromBase: "http://localhost:11434/v1/")?.absoluteString
+            == "http://localhost:11434/v1/chat/completions")
+        #expect(Config.customEndpoint(fromBase: "http://localhost:11434/v1/chat/completions/")?.absoluteString
+            == "http://localhost:11434/v1/chat/completions")
+        // Pasted whitespace is tolerated.
+        #expect(Config.customEndpoint(fromBase: " https://host/v1 ")?.absoluteString
+            == "https://host/v1/chat/completions")
+        // Scheme-less or non-http input could only fail at request time — reject it up front.
+        #expect(Config.customEndpoint(fromBase: "myserver.local:8080/v1") == nil)
+        #expect(Config.customEndpoint(fromBase: "ftp://host/v1") == nil)
+        #expect(Config.customEndpoint(fromBase: "https://") == nil)
+    }
+
     // MARK: excerpt cap
 
     @Test func excerptPassesThroughUnderCap() {
