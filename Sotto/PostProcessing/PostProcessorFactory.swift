@@ -13,7 +13,13 @@ struct FallbackPostProcessor: PostProcessor {
     func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
         do {
             return try await primary.process(transcript: transcript, audio: audio)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            // Cancellation is teardown, not a provider failure — don't spend an on-device
+            // run on a result nobody awaits. URLSession surfaces it as URLError(.cancelled),
+            // hence the task re-check beyond the typed catch above.
+            try Task.checkCancellation()
             // Issue #14 diagnosability: without this, "cloud configured but every summary
             // quietly came from on-device" is invisible. Error TYPE only — never content.
             Self.logger.notice("""

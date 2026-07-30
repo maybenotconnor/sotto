@@ -32,8 +32,13 @@ struct ChatCompletionsConfig: Sendable, Equatable {
     }
 
     /// "http://host/v1" → ".../v1/chat/completions"; a pasted full URL passes through.
+    /// Requires http(s) + host: `URL(string:)` reads "myserver.local:8080/v1" as scheme
+    /// "myserver.local", which would otherwise fail only at request time.
     static func customEndpoint(fromBase base: String) -> URL? {
-        guard let url = URL(string: base), url.scheme != nil else { return nil }
+        var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", url.host() != nil else { return nil }
         if url.path.hasSuffix("/chat/completions") { return url }
         return url.appending(path: "chat/completions")
     }

@@ -291,6 +291,13 @@ struct SettingsView: View {
                     Label("No API key — on-device summaries are used until a key is added.",
                           systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
+                } else if summaryBackend == .custom,
+                          ChatCompletionsConfig.customEndpoint(fromBase: summaryBaseURL) == nil {
+                    // Same silent fallback, other missing half: the factory also rejects a
+                    // custom endpoint it can't validate.
+                    Label("Endpoint must be a full http(s) URL — on-device summaries are used until it's fixed.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
                 }
                 Text("Transcripts (text only — never audio) are sent to \(summaryBackend.displayName) under your account. If the provider can't be reached, notes are generated on-device.")
                     .font(.caption).foregroundStyle(.secondary)

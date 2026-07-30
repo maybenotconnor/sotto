@@ -11,6 +11,16 @@ private struct FakeProcessor: PostProcessor {
     }
 }
 
+/// Hangs until its task is cancelled, then surfaces the given error — mimics both a
+/// well-behaved primary (CancellationError) and URLSession (URLError(.cancelled)).
+private struct HangingProcessor: PostProcessor {
+    let cancellationError: any Error
+    func process(transcript: TranscriptionResult, audio: URL?) async throws -> PostProcessingResult {
+        do { try await Task.sleep(for: .seconds(60)) } catch { throw cancellationError }
+        throw CloudSummaryError.badResponse(500)
+    }
+}
+
 struct PostProcessorFactoryTests {
     private func settings() -> SettingsStore {
         SettingsStore(defaults: UserDefaults(suiteName: "FactoryTests-\(UUID().uuidString)")!)
@@ -56,6 +66,25 @@ struct PostProcessorFactoryTests {
         await #expect(throws: CloudSummaryError.self) {
             _ = try await wrapper.process(transcript: transcript, audio: nil)
         }
+    }
+
+    @Test func cancellationRethrowsWithoutRunningFallback() async {
+        let wrapper = FallbackPostProcessor(
+            primary: HangingProcessor(cancellationError: CancellationError()),
+            fallback: FakeProcessor(result: notes))   // returning notes would mask the bug
+        let task = Task { try await wrapper.process(transcript: transcript, audio: nil) }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test func urlSessionStyleCancellationSkipsFallback() async {
+        // URLSession reports task cancellation as URLError(.cancelled), not CancellationError.
+        let wrapper = FallbackPostProcessor(
+            primary: HangingProcessor(cancellationError: URLError(.cancelled)),
+            fallback: FakeProcessor(result: notes))
+        let task = Task { try await wrapper.process(transcript: transcript, audio: nil) }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
     }
 
     // MARK: factory composition rules
