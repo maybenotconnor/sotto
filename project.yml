@@ -24,8 +24,13 @@ targets:
       - path: Sotto
         excludes:
           - "Resources"
+          - "PrivacyInfo.xcprivacy"
       - path: Sotto/Resources/silero-vad-unified-256ms-v6.0.0.mlmodelc
         type: folder
+        buildPhase: resources
+      # Explicit resource phase so the privacy manifest lands in the bundle root
+      # regardless of how XcodeGen's extension inference treats .xcprivacy.
+      - path: Sotto/PrivacyInfo.xcprivacy
         buildPhase: resources
     dependencies:
       - package: FluidAudio
@@ -42,6 +47,10 @@ targets:
     info:
       path: Sotto/Info.plist
       properties:
+        CFBundleDisplayName: Sotto
+        # Standard HTTPS/OS crypto only — exempt; answers the export-compliance
+        # question at upload instead of per-build in App Store Connect.
+        ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: Sotto listens for nearby speech and records only while people are talking. Audio is processed on this device.
         NSBluetoothAlwaysUsageDescription: Sotto connects to your paired Omi wearable to capture audio from its microphone.
         UIBackgroundModes: [audio, bluetooth-central]
@@ -93,6 +102,7 @@ targets:
       path: SottoWidgets/Info.plist
       properties:
         CFBundleDisplayName: Sotto
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SottoTests:
