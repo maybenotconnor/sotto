@@ -8,21 +8,16 @@
 > user-initiated session with background continuation. Never "records everything
 > all day." No battery claims until profiling (flight-check C10) is done.
 
-## Name (30 chars max)
+## Name (30 chars max) — DECIDED 2026-07-30
 
-| Option | Chars |
-| --- | --- |
-| Sotto — AI Meeting Notetaker | 28 |
-| Sotto: Auto Meeting Notes | 25 |
-| Sotto — Hands-Free Notes | 24 |
+**Sotto — Offline Auto Notetaker** (30/30)
 
-## Subtitle (30 chars max)
+Backups if D13 or App Store Connect rejects it: "Sotto — Offline Meeting Notes"
+(29), "Sotto — One Note per Meeting" (28).
 
-| Option | Chars |
-| --- | --- |
-| Notes that start themselves | 27 |
-| Auto-detects your meetings | 26 |
-| Meeting notes, all on-device | 28 |
+## Subtitle (30 chars max) — DECIDED 2026-07-30
+
+**Notes that start themselves** (27/30)
 
 ## Promotional text (170 chars max)
 
@@ -68,10 +63,12 @@ iOS 26 or later. Transcription works fully offline after a one-time speech-model
 ## Keywords (100 chars max)
 
 ```
-recorder,voice,meeting,notes,memo,ai,notetaker,omi,wearable,transcribe,offline,private,summary
+recorder,voice,meeting,memo,ai,transcribe,private,summary,omi,wearable,minutes,markdown
 ```
 
-(94 chars — don't repeat the app name; it's indexed automatically)
+(87 chars. Name and subtitle words are already indexed — the chosen name covers
+offline/auto/notetaker and the subtitle covers notes, so those are deliberately
+absent here.)
 
 ## What's New — 1.0
 

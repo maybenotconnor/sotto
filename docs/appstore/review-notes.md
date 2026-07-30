@@ -65,11 +65,12 @@ HOW TO TEST
 
 ---
 
-## Also required on the app record (D14)
+## Also required on the app record (D14) — URLs decided 2026-07-30
 
-- **Privacy policy URL** — not yet written; must cover: no developer data
-  collection; on-device processing default; the BYOK integrations above
-  (including Deepgram model-improvement opt-out); iCloud sync; user deletion.
-- **Support URL** — decide: GitHub issues page vs. a decanlys.com page.
+- **Privacy policy URL** — `https://maybenotconnor.github.io/sotto/privacy/`
+  (GitHub Pages serving `docs/privacy.md`; live once the branch merges and
+  Pages finishes its first build).
+- **Support URL** — `https://github.com/maybenotconnor/sotto/issues`
+  (repo is public with issues enabled).
 - **Nutrition labels** — "Data Not Collected" (consistent with the privacy
   manifest merged in PR #22: no tracking, empty collected-data types).
