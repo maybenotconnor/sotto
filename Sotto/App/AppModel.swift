@@ -104,6 +104,9 @@ final class AppModel {
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
+    // nonisolated(unsafe): same rationale as AudioSessionObserver.tokens — deinit is
+    // nonisolated even on a @MainActor class, and runs only after all isolated mutation.
+    private nonisolated(unsafe) var terminationToken: NSObjectProtocol?
     private let installer: any SpeechAssetInstalling
     private let networkMonitor: any NetworkMonitoring
     /// Test seam: when set, `performSetUp` roots BOTH the `SegmentStore` and `segmentRoot`
@@ -194,6 +197,27 @@ final class AppModel {
         // process without a scene) can already await a real toggle the moment perform() runs.
         IntentHandlers.shared.register(owner: self) { [weak self] in
             await self?.toggleFromIntent()
+        }
+        // 2026-08-04 field incident: a force-quit from the app switcher while capturing is
+        // the app's LAST runnable moment — iOS bars force-quit apps from BLE state
+        // restoration, so no later code can warn the user recording died. willTerminate is
+        // only delivered to a running app, but a capturing Sotto is always running (BLE
+        // packets or the live mic keep it awake). Registered once for the model's lifetime
+        // (not per pipeline rebuild) and reads `self?.pipeline` so it warns for the
+        // current pipeline.
+        terminationToken = NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let pipeline = self?.pipeline else { return }
+                Task { await pipeline.appWillTerminate() }
+            }
+        }
+    }
+
+    deinit {
+        if let terminationToken {
+            NotificationCenter.default.removeObserver(terminationToken)
         }
     }
 

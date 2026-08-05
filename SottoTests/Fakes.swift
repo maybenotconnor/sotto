@@ -225,6 +225,7 @@ actor FakeNotificationScheduler: NotificationScheduling {
     private(set) var captureUnavailableDelays: [TimeInterval] = []
     private(set) var captureUnavailableCancelCount = 0
     private(set) var lowBatteryLevels: [Int] = []
+    private(set) var closedWhileRecordingCount = 0
     func requestAuthorizationIfNeeded() { authorizationRequests += 1 }
     func schedulePausedNotification() { scheduled += 1 }
     func cancelPausedNotification() { cancelled += 1 }
@@ -234,6 +235,7 @@ actor FakeNotificationScheduler: NotificationScheduling {
     }
     func cancelCaptureUnavailableNotification() { captureUnavailableCancelCount += 1 }
     func scheduleLowBatteryNotification(deviceName: String, level: Int) { lowBatteryLevels.append(level) }
+    func scheduleClosedWhileRecordingNotification() { closedWhileRecordingCount += 1 }
 }
 
 /// NotificationScheduling whose cancel suspends until released — for ordering races.
@@ -248,6 +250,7 @@ actor GatedNotificationScheduler: NotificationScheduling {
     func scheduleCaptureUnavailableNotification(deviceName: String, delay: TimeInterval) {}
     func cancelCaptureUnavailableNotification() {}
     func scheduleLowBatteryNotification(deviceName: String, level: Int) {}
+    func scheduleClosedWhileRecordingNotification() {}
 
     func cancelPausedNotification() async {
         cancelWasRequested = true
