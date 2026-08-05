@@ -104,9 +104,13 @@ final class AppModel {
     let settings = SettingsStore()
     private var setupTask: Task<Void, Never>?
     private var observer: AudioSessionObserver?
-    // nonisolated(unsafe): same rationale as AudioSessionObserver.tokens — deinit is
-    // nonisolated even on a @MainActor class, and runs only after all isolated mutation.
-    private nonisolated(unsafe) var terminationToken: NSObjectProtocol?
+    // @ObservationIgnored: not UI state — and required for nonisolated(unsafe) to reach a
+    // real stored property (the @Observable macro otherwise rewrites the var into tracked
+    // accessors the annotation can't affect, which is what Xcode's "has no effect" warning
+    // was about). nonisolated(unsafe): deinit is nonisolated even on a @MainActor class
+    // and must read this token; it runs only after all isolated mutation (same rationale
+    // as AudioSessionObserver.tokens).
+    @ObservationIgnored private nonisolated(unsafe) var terminationToken: NSObjectProtocol?
     private let installer: any SpeechAssetInstalling
     private let networkMonitor: any NetworkMonitoring
     /// Test seam: when set, `performSetUp` roots BOTH the `SegmentStore` and `segmentRoot`
