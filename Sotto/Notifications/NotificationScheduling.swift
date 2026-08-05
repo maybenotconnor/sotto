@@ -18,6 +18,11 @@ protocol NotificationScheduling: Sendable {
     func cancelCaptureUnavailableNotification() async
     /// M12: the wearable's reported battery level is low.
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async
+    /// 2026-08-04 incident: the app is being terminated (force-quit from the app switcher,
+    /// system shutdown) while capture is live. Delivered immediately — this is the last
+    /// code Sotto runs, and a force-quit app is barred from BLE state restoration, so
+    /// there is no later moment to notify from.
+    func scheduleClosedWhileRecordingNotification() async
 }
 
 struct UserNotificationScheduler: NotificationScheduling {
@@ -27,6 +32,7 @@ struct UserNotificationScheduler: NotificationScheduling {
     // Identifier value predates the seam generalization; it's a dedup key, not copy —
     // changing it would orphan pending notifications.
     private static let lowBatteryIdentifier = "sotto.omiLowBattery"
+    private static let closedWhileRecordingIdentifier = "sotto.closedWhileRecording"
 
     func requestAuthorizationIfNeeded() async {
         // Full [.alert, .sound], not provisional (redesign spec §3): the "Recording
@@ -75,6 +81,16 @@ struct UserNotificationScheduler: NotificationScheduling {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [Self.captureUnavailableIdentifier])
         center.removeDeliveredNotifications(withIdentifiers: [Self.captureUnavailableIdentifier])
+    }
+
+    func scheduleClosedWhileRecordingNotification() async {
+        let content = UNMutableNotificationContent()
+        content.title = "Sotto was closed"
+        content.body = "Recording was still running and has stopped. Reopen Sotto to start again."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: Self.closedWhileRecordingIdentifier, content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async {

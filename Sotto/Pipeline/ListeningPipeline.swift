@@ -305,6 +305,17 @@ final class ListeningPipeline {
         await switching.retryPhoneMic()
     }
 
+    /// Last-gasp warning for `UIApplication.willTerminateNotification` (force-quit, system
+    /// shutdown) — see `scheduleClosedWhileRecordingNotification`. Only live capture warns:
+    /// waiting already fired the capture-unavailable alert, and a parked session already
+    /// delivered "Sotto was paused" — stacking a second alert over either would contradict it.
+    func appWillTerminate() async {
+        guard activeSourceType != nil,
+              status == .listening || status == .recording || status == .silence else { return }
+        logger.notice("terminating with live capture — scheduling closed-while-recording alert")
+        await notifications?.scheduleClosedWhileRecordingNotification()
+    }
+
     private enum HaltMode { case stop, park(HaltReason) }
 
     private func performHalt(_ mode: HaltMode) async {
