@@ -2,32 +2,28 @@ import Foundation
 import Testing
 @testable import Sotto
 
-/// Force-quit warning (2026-08-04 field incident): iOS delivers `applicationWillTerminate`
-/// with a ~5 s grace window when a *running* app is swiped away in the app switcher, and a
-/// force-quit app is barred from BLE state restoration — so this last-gasp notification is
-/// the ONLY signal the user ever gets that recording died with the app.
+/// Force-quit warning (2026-08-04 field incident): iOS delivers willTerminate to a
+/// *running* app being swiped away, but the process exits the moment the synchronous
+/// callbacks return — device-log measured at ~8 ms (2026-08-05), so the warning must be
+/// decided and fired inline on that thread. The pipeline owns the DECISION only, as the
+/// synchronous `shouldWarnOnTermination` gate tested here; AppModel's observer fires the
+/// notification and blocks until the daemon acks (untestable glue, like the scheduler).
 @MainActor
 struct TerminationWarningTests {
     @Test func warnsWhenTerminatedWhileCapturing() async throws {
         let mic = FakeSimpleAudioSource()
-        let notifications = FakeNotificationScheduler()
-        let pipeline = ListeningPipeline(source: mic, recorder: FakeRecorder(),
-                                         notifications: notifications)
+        let pipeline = ListeningPipeline(source: mic, recorder: FakeRecorder())
         await pipeline.start()
         #expect(pipeline.activeSourceType == .phoneMic)
 
-        await pipeline.appWillTerminate()
-        #expect(await notifications.closedWhileRecordingCount == 1)
+        #expect(pipeline.shouldWarnOnTermination)
         await pipeline.stop()
     }
 
     @Test func noWarningWhenIdle() async throws {
-        let notifications = FakeNotificationScheduler()
         let pipeline = ListeningPipeline(source: FakeSimpleAudioSource(),
-                                         recorder: FakeRecorder(),
-                                         notifications: notifications)
-        await pipeline.appWillTerminate()
-        #expect(await notifications.closedWhileRecordingCount == 0)
+                                         recorder: FakeRecorder())
+        #expect(!pipeline.shouldWarnOnTermination)
     }
 
     @Test func noWarningWhileWaitingForCapture() async throws {
@@ -41,15 +37,12 @@ struct TerminationWarningTests {
             wearable: omi, phoneMic: mic,
             config: FailoverConfig(reconnectGrace: .milliseconds(60),
                                    returnHysteresis: .milliseconds(80)))
-        let notifications = FakeNotificationScheduler()
-        let pipeline = ListeningPipeline(source: failover, recorder: FakeRecorder(),
-                                         notifications: notifications)
+        let pipeline = ListeningPipeline(source: failover, recorder: FakeRecorder())
         await pipeline.start()
         try await Task.sleep(for: .milliseconds(100))
         #expect(pipeline.isWaitingForCapture)
 
-        await pipeline.appWillTerminate()
-        #expect(await notifications.closedWhileRecordingCount == 0)
+        #expect(!pipeline.shouldWarnOnTermination)
         await pipeline.stop()
     }
 
@@ -57,15 +50,12 @@ struct TerminationWarningTests {
         // A parked session already delivered the "Sotto was paused" notification; the user
         // has been told recording is not running.
         let mic = FakeSimpleAudioSource()
-        let notifications = FakeNotificationScheduler()
-        let pipeline = ListeningPipeline(source: mic, recorder: FakeRecorder(),
-                                         notifications: notifications)
+        let pipeline = ListeningPipeline(source: mic, recorder: FakeRecorder())
         await pipeline.start()
         await pipeline.interrupt()
         #expect(pipeline.status == .interrupted)
 
-        await pipeline.appWillTerminate()
-        #expect(await notifications.closedWhileRecordingCount == 0)
+        #expect(!pipeline.shouldWarnOnTermination)
         await pipeline.stop()
     }
 }

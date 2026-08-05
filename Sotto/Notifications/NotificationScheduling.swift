@@ -18,11 +18,6 @@ protocol NotificationScheduling: Sendable {
     func cancelCaptureUnavailableNotification() async
     /// M12: the wearable's reported battery level is low.
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async
-    /// 2026-08-04 incident: the app is being terminated (force-quit from the app switcher,
-    /// system shutdown) while capture is live. Delivered immediately — this is the last
-    /// code Sotto runs, and a force-quit app is barred from BLE state restoration, so
-    /// there is no later moment to notify from.
-    func scheduleClosedWhileRecordingNotification() async
 }
 
 struct UserNotificationScheduler: NotificationScheduling {
@@ -83,14 +78,24 @@ struct UserNotificationScheduler: NotificationScheduling {
         center.removeDeliveredNotifications(withIdentifiers: [Self.captureUnavailableIdentifier])
     }
 
-    func scheduleClosedWhileRecordingNotification() async {
+    /// 2026-08-04 incident, NOT part of the async protocol: the app is being terminated
+    /// (force-quit, system shutdown) while capture is live, and this is the last code
+    /// Sotto ever runs — a force-quit app is barred from BLE state restoration. Called on
+    /// the willTerminate main thread, where the process exits as soon as the callbacks
+    /// return; an async hop never executes (device-log proven, 2026-08-05). Blocks (≤2 s)
+    /// until the notification daemon acks the add so the XPC request is guaranteed handed
+    /// off before exit(). Blocking the main thread is acceptable here and only here: the
+    /// process is dying, and the termination watchdog allows ~5 s.
+    static func fireClosedWhileRecordingNotificationAndWait() {
         let content = UNMutableNotificationContent()
         content.title = "Sotto was closed"
         content.body = "Recording was still running and has stopped. Reopen Sotto to start again."
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: Self.closedWhileRecordingIdentifier, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(request)
+        let acked = DispatchSemaphore(value: 0)
+        UNUserNotificationCenter.current().add(request) { _ in acked.signal() }
+        _ = acked.wait(timeout: .now() + 2)
     }
 
     func scheduleLowBatteryNotification(deviceName: String, level: Int) async {

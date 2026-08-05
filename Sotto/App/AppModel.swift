@@ -208,13 +208,15 @@ final class AppModel {
         // only delivered to a running app, but a capturing Sotto is always running (BLE
         // packets or the live mic keep it awake). Registered once for the model's lifetime
         // (not per pipeline rebuild) and reads `self?.pipeline` so it warns for the
-        // current pipeline.
+        // current pipeline. Everything below MUST stay synchronous: the process exits the
+        // moment these callbacks return (~8 ms measured on device, 2026-08-05) — a Task
+        // enqueued here never runs (that was v1 of this fix, disproven by device log).
         terminationToken = NotificationCenter.default.addObserver(
             forName: UIApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let pipeline = self?.pipeline else { return }
-                Task { await pipeline.appWillTerminate() }
+                guard self?.pipeline?.shouldWarnOnTermination == true else { return }
+                UserNotificationScheduler.fireClosedWhileRecordingNotificationAndWait()
             }
         }
     }
