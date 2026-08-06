@@ -15,7 +15,7 @@
 - Test runs: `xcodebuild build-for-testing` once per code change, then `test-without-building` with `-only-testing:SottoTests/<Suite>` chunks; NEVER background xcodebuild (it gets killed and wedges the simulator). Verdict = `TEST EXECUTE SUCCEEDED` in output.
 - Destination: `platform=iOS Simulator,name=iPhone Air`.
 - Commit messages: plain, no Co-Authored-By / attribution trailers.
-- The Xcode project uses explicit PBXFileReference entries — every new file must be registered in `Sotto.xcodeproj/project.pbxproj` (Task 1 Step 2 shows how).
+- The Xcode project is **XcodeGen-generated** (`project.yml` globs `Sotto/` and `SottoTests/`; `*.xcodeproj` is gitignored). New files need NO registration — create them and rebuild. Task 1 Step 2 (manual pbxproj registration) is unnecessary; skip it. If the generated project ever goes stale, run `xcodegen generate`.
 - Guardrail and JSON contract wording must remain byte-identical to today's strings (they are load-bearing: parser + injection defense).
 - New settings keys: `summaryPromptOverride` (UserDefaults). Clamp constant: `SettingsBounds.summaryPromptMaxCharacters = 4_000`.
 
