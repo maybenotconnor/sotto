@@ -1,7 +1,7 @@
 # Configurable Summary Prompt — Design
 
 **Date:** 2026-08-06
-**Status:** Approved
+**Status:** Implemented
 
 ## Problem
 
