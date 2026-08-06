@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var summaryModel = ""
     @State private var summaryBaseURL = ""
     @State private var summaryTestResult: Bool?
+    @State private var summaryPrompt = ""
     @State private var usage: AppModel.StorageUsage?
     @State private var showPowerUser = false
     @State private var notificationStatus = "—"
@@ -302,6 +303,28 @@ struct SettingsView: View {
                 Text("Transcripts (text only — never audio) are sent to \(summaryBackend.displayName) under your account. If the provider can't be reached, notes are generated on-device.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Notes prompt")
+                TextEditor(text: $summaryPrompt)
+                    .frame(minHeight: 96)
+                    .font(.footnote)
+                    .autocorrectionDisabled()
+                    .onChange(of: summaryPrompt) { _, value in
+                        // Blank or unchanged-from-default → no override (the SettingsStore
+                        // choke point makes both read back as the default anyway).
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        model.settings.summaryPromptOverride =
+                            (trimmed.isEmpty || value == SummaryPrompt.defaultInstructions) ? nil : value
+                    }
+            }
+            if summaryPrompt != SummaryPrompt.defaultInstructions {
+                Button("Reset to Default Prompt") {
+                    model.settings.summaryPromptOverride = nil
+                    summaryPrompt = SummaryPrompt.defaultInstructions
+                }
+            }
+            Text("Applies to future summaries and Regenerate Notes, on-device and cloud. The title / summary / action-items structure is fixed.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -426,6 +449,7 @@ struct SettingsView: View {
         summaryKey = summaryBackend.keychainKey.flatMap { KeychainStore().get($0) } ?? ""
         summaryModel = model.settings.summaryModelOverride(for: summaryBackend) ?? ""
         summaryBaseURL = model.settings.summaryCustomBaseURL ?? ""
+        summaryPrompt = model.settings.summaryPromptInstructions
     }
 
     /// Keychain write on submit/test only, not per keystroke (persistKey precedent).
