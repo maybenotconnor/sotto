@@ -144,6 +144,44 @@ struct PostProcessorFactoryTests {
         #expect(processor is FoundationModelsPostProcessor)
     }
 
+    // MARK: custom prompt threading (design 2026-08-06)
+
+    @Test func factoryThreadsCustomPromptIntoOnDevice() throws {
+        let s = settings()
+        s.summaryPromptOverride = "Summarize in Spanish."
+        let processor = PostProcessorFactory.make(
+            settings: s, keychain: KeychainStore(service: "f-\(UUID().uuidString)"),
+            lowPowerMode: false, onDeviceAvailable: true)
+        let onDevice = try #require(processor as? FoundationModelsPostProcessor)
+        #expect(onDevice.instructions.contains("Summarize in Spanish."))
+        #expect(onDevice.instructions.hasSuffix(SummaryPrompt.guardrail))   // guardrail survives
+    }
+
+    @Test func factoryThreadsCustomPromptIntoCloudAndFallback() throws {
+        let keychain = KeychainStore(service: "f-\(UUID().uuidString)")
+        defer { keychain.delete("summaryAPIKey.openai") }
+        keychain.set("sk", for: "summaryAPIKey.openai")
+        let s = settings()
+        s.summaryBackend = .openAI
+        s.summaryPromptOverride = "Focus on decisions."
+        let processor = PostProcessorFactory.make(
+            settings: s, keychain: keychain, lowPowerMode: false, onDeviceAvailable: true)
+        let wrapper = try #require(processor as? FallbackPostProcessor)
+        let cloud = try #require(wrapper.primary as? ChatCompletionsPostProcessor)
+        #expect(cloud.systemPrompt.contains("Focus on decisions."))
+        #expect(cloud.systemPrompt.hasSuffix(SummaryPrompt.jsonContract))   // contract stays terminal
+        let fallback = try #require(wrapper.fallback as? FoundationModelsPostProcessor)
+        #expect(fallback.instructions.contains("Focus on decisions."))
+    }
+
+    @Test func defaultPromptUsedWhenNoOverride() throws {
+        let processor = PostProcessorFactory.make(
+            settings: settings(), keychain: KeychainStore(service: "f-\(UUID().uuidString)"),
+            lowPowerMode: false, onDeviceAvailable: true)
+        let onDevice = try #require(processor as? FoundationModelsPostProcessor)
+        #expect(onDevice.instructions.contains(SummaryPrompt.defaultInstructions))
+    }
+
     // MARK: availability helper
 
     @Test func summariesAvailableReflectsEitherPath() {

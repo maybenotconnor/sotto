@@ -45,12 +45,16 @@ enum PostProcessorFactory {
         // SPEC Low Power detection — one rule for all providers: transcripts still ship,
         // only best-effort notes are skipped (kept deliberately; revisit if desired).
         guard !lowPowerMode else { return nil }
-        let onDevice: (any PostProcessor)? = onDeviceAvailable ? FoundationModelsPostProcessor() : nil
+        let custom = settings.summaryPromptInstructions
+        let onDevice: (any PostProcessor)? = onDeviceAvailable
+            ? FoundationModelsPostProcessor(instructions: SummaryPrompt.onDeviceInstructions(custom: custom))
+            : nil
         guard let config = ChatCompletionsConfig.resolve(settings: settings, keychain: keychain) else {
             return onDevice   // silent fallback when unconfigured — Deepgram convention
         }
         let cloud = ChatCompletionsPostProcessor(
-            config: config, apiKeyProvider: { KeychainStore().get(config.keychainKey) })
+            config: config, apiKeyProvider: { KeychainStore().get(config.keychainKey) },
+            systemPrompt: SummaryPrompt.cloudSystemPrompt(custom: custom))
         return FallbackPostProcessor(primary: cloud, fallback: onDevice)
     }
 
