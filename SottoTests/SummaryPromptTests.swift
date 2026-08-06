@@ -28,4 +28,36 @@ struct SummaryPromptTests {
         #expect(SummaryPrompt.jsonContract.contains("actionItems"))
         #expect(SummaryPrompt.defaultInstructions.contains("never invent names"))
     }
+
+    // MARK: SettingsStore resolution (vadThreshold choke-point precedent)
+
+    private func settings() -> SettingsStore {
+        SettingsStore(defaults: UserDefaults(suiteName: "PromptTests-\(UUID().uuidString)")!)
+    }
+
+    @Test func unsetOverrideResolvesToDefault() {
+        let s = settings()
+        #expect(s.summaryPromptOverride == nil)
+        #expect(s.summaryPromptInstructions == SummaryPrompt.defaultInstructions)
+    }
+
+    @Test func blankOverrideResolvesToDefault() {
+        let s = settings()
+        s.summaryPromptOverride = "  \n\t "
+        #expect(s.summaryPromptInstructions == SummaryPrompt.defaultInstructions)
+    }
+
+    @Test func customOverrideRoundTrips() {
+        let s = settings()
+        s.summaryPromptOverride = "Summarize in Spanish. Focus on decisions."
+        #expect(s.summaryPromptInstructions == "Summarize in Spanish. Focus on decisions.")
+        s.summaryPromptOverride = nil
+        #expect(s.summaryPromptInstructions == SummaryPrompt.defaultInstructions)
+    }
+
+    @Test func oversizedOverrideIsClamped() {
+        let s = settings()
+        s.summaryPromptOverride = String(repeating: "a", count: 10_000)
+        #expect(s.summaryPromptInstructions.count == SettingsBounds.summaryPromptMaxCharacters)
+    }
 }

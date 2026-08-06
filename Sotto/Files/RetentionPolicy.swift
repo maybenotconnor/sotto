@@ -45,6 +45,11 @@ enum SettingsBounds {
 
     static let preRollSeconds: ClosedRange<TimeInterval> = 0.5...3.0
     static let preRollSecondsDefault: TimeInterval = 1.0
+
+    /// Custom notes-prompt ceiling: the on-device 4,096-token window is shared with the
+    /// transcript excerpt (5k+5k chars) and the generated notes — a pasted essay must not
+    /// starve them. Clamped at the SettingsStore getter, like every other bound here.
+    static let summaryPromptMaxCharacters = 4_000
 }
 
 extension ClosedRange {

@@ -83,4 +83,20 @@ extension SettingsStore {
         get { defaults.string(forKey: "summaryCustomBaseURL") }
         nonmutating set { defaults.set(newValue, forKey: "summaryCustomBaseURL") }
     }
+
+    /// Raw prompt override (what the Settings editor persists); nil = default paragraph.
+    var summaryPromptOverride: String? {
+        get { defaults.string(forKey: "summaryPromptOverride") }
+        nonmutating set { defaults.set(newValue, forKey: "summaryPromptOverride") }
+    }
+
+    /// Resolved instruction paragraph — the getter choke point (vadThreshold precedent):
+    /// blank/whitespace overrides read as the default (a blank prompt is never sent), and
+    /// length is clamped so a pasted essay can't eat the on-device context window.
+    var summaryPromptInstructions: String {
+        guard let override = summaryPromptOverride,
+              !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return SummaryPrompt.defaultInstructions }
+        return String(override.prefix(SettingsBounds.summaryPromptMaxCharacters))
+    }
 }
